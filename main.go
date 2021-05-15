@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"chiastat/utils"
 	"database/sql"
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net"
@@ -18,7 +20,7 @@ import (
 )
 
 func mainErr() error {
-	listenPeers := flag.Bool("listen-peers", false, "listen UDP peer messages from hook on port 18444")
+	listenPeers := flag.Bool("listen-peers", false, "listen TCP peer messages from hook on port 18444")
 	addPeersFrom := flag.String("add-peers-from", "", "path to peer_table_node.sqlite to load peers from")
 	flag.Parse()
 
@@ -62,22 +64,24 @@ func mainErr() error {
 				}
 				defer tx.Rollback()
 				items := strings.Split(s, " ")
-				if len(items) != 3 {
-					return merry.Errorf("expected 3 items, got %d: %s", len(items), s)
+				if len(items)%2 != 1 {
+					return merry.Errorf("expected odd items count, got %d: %s", len(items), s)
 				}
-				host := items[1]
-				port, err := strconv.ParseInt(items[2], 10, 64)
-				if err != nil {
-					return merry.Wrap(err)
-				}
-				_, err = tx.Exec(`
+				for i := 1; i < len(items); i += 2 {
+					host := items[i]
+					port, err := strconv.ParseInt(items[i+1], 10, 64)
+					if err != nil {
+						return merry.Wrap(err)
+					}
+					_, err = tx.Exec(`
 					INSERT INTO raw_nodes (host, port) VALUES (?, ?)
 					ON CONFLICT (host, port) DO UPDATE SET
 						updated_at = now()`,
-					host, port,
-				)
-				if err != nil {
-					return merry.Wrap(err)
+						host, port,
+					)
+					if err != nil {
+						return merry.Wrap(err)
+					}
 				}
 				if err := tx.Commit(); err != nil {
 					return merry.Wrap(err)
@@ -88,25 +92,35 @@ func mainErr() error {
 			return nil
 		}
 
-		conn, err := net.ListenPacket("udp", "127.0.0.1:18444")
+		ln, err := net.Listen("tcp", "127.0.0.1:18444")
 		if err != nil {
 			return merry.Wrap(err)
 		}
-
-		buf := make([]byte, 2048)
 		for {
-			n, _, err := conn.ReadFrom(buf)
+			conn, err := ln.Accept()
 			if err != nil {
 				return merry.Wrap(err)
 			}
-			s := string(buf[:n])
-			if strings.HasSuffix(s, "\n") {
-				s = s[:len(s)-1]
-			}
+			buf := bufio.NewReader(conn)
+			go func() {
+				for {
+					msg, err := buf.ReadString('\n')
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						log.Println(merry.Details(err))
+						break
+					}
+					if strings.HasSuffix(msg, "\n") {
+						msg = msg[:len(msg)-1]
+					}
 
-			if err := handleMessage(s); err != nil {
-				log.Println(merry.Details(err))
-			}
+					if err := handleMessage(msg); err != nil {
+						log.Println(merry.Details(err))
+					}
+				}
+			}()
 		}
 	}
 
