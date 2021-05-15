@@ -1,82 +1,84 @@
 package main
 
 import (
+	"chiastat/utils"
 	"database/sql"
+	"flag"
 	"fmt"
+	"log"
 	"math/big"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/ansel1/merry"
 	_ "github.com/mattn/go-sqlite3"
 )
 
-type Scanner interface {
-	Scan(dest ...interface{}) error
-}
-
-const BlockRecordSelectCols = "header_hash, prev_hash, height, block, sub_epoch_summary, is_peak, is_block"
-
-func BlockRecordFromRow(rows Scanner) (*BlockRecord, error) {
-	var headerHash string
-	var prevHash string
-	var height int64
-	var block []byte
-	var subEpochSummary []byte
-	var isPeak int8
-	var isBlock int8
-	err := rows.Scan(&headerHash, &prevHash, &height, &block, &subEpochSummary, &isPeak, &isBlock)
-	if err != nil {
-		return nil, merry.Wrap(err)
-	}
-	// fmt.Println(headerHash, prevHash, height, isPeak, isBlock)
-	// fmt.Println(block)
-	buf := NewParseBuf(block)
-	br := BlockRecordFromBytes(buf)
-	if buf.err != nil {
-		return nil, buf.err
-	}
-	// fmt.Printf("%#v\n", br)
-	// fmt.Println(br.height, br.weight, br.totalIters)
-	return &br, nil
-}
-
-func BlockRecordByHeight(db *sql.DB, height int64) (*BlockRecord, error) {
-	row := db.QueryRow("SELECT "+BlockRecordSelectCols+" FROM block_records WHERE height = ?", height)
-	return BlockRecordFromRow(row)
-}
-
-func EstimateNetworkSpace(db *sql.DB, lastHeight, pastOffset int64) (*big.Int, error) {
-	firstHeight := lastHeight - pastOffset
-	if firstHeight < 0 {
-		firstHeight = 0
-	}
-
-	br0, err := BlockRecordByHeight(db, firstHeight)
-	if err != nil {
-		return nil, merry.Wrap(err)
-	}
-	br1, err := BlockRecordByHeight(db, lastHeight)
-	if err != nil {
-		return nil, merry.Wrap(err)
-	}
-
-	// https://github.com/Chia-Network/chia-blockchain/blob/latest/chia/rpc/full_node_rpc_api.py#L276
-	deltaWeight := (&big.Int{}).Sub(br1.Weight, br0.Weight)
-	deltaIters := (&big.Int{}).Sub(br1.TotalIters, br0.TotalIters)
-	additionalDifficultyConstant := (&big.Int{}).Exp(big.NewInt(2), big.NewInt(67), nil)
-	eligiblePlotsFilterMultiplier := (&big.Int{}).Exp(big.NewInt(2), big.NewInt(9), nil)
-	UI_ACTUAL_SPACE_CONSTANT_FACTOR := 0.762
-
-	spaceEstimate := &big.Int{}
-	spaceEstimate.Mul(additionalDifficultyConstant, eligiblePlotsFilterMultiplier)
-	spaceEstimate.Mul(spaceEstimate, deltaWeight)
-	spaceEstimate.Div(spaceEstimate, deltaIters)
-	spaceEstimate.Mul(spaceEstimate, big.NewInt(int64(UI_ACTUAL_SPACE_CONSTANT_FACTOR*1000000)))
-	spaceEstimate.Div(spaceEstimate, big.NewInt(1000000))
-	return spaceEstimate, nil
-}
-
 func mainErr() error {
+	addPeersFrom := flag.String("add-peers-from", "", "path to peer_table_node.sqlite to load peers from")
+	flag.Parse()
+
+	if *addPeersFrom != "" {
+		count := 0
+
+		db := utils.MakePGConnection()
+		tx, err := db.Begin()
+		if err != nil {
+			return merry.Wrap(err)
+		}
+
+		peersDB, err := sql.Open("sqlite3", *addPeersFrom)
+		if err != nil {
+			return merry.Wrap(err)
+		}
+		defer peersDB.Close()
+
+		rows, err := peersDB.Query("SELECT value FROM peer_nodes")
+		if err != nil {
+			return merry.Wrap(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var value string
+			if err := rows.Scan(&value); err != nil {
+				return merry.Wrap(err)
+			}
+			items := strings.Split(value, " ")
+			if len(items) != 5 {
+				log.Printf("WARN: expected 5 items, got %d: %s", len(items), value)
+			}
+			port1, err := strconv.ParseInt(items[1], 10, 64)
+			if err != nil {
+				return merry.Wrap(err)
+			}
+			port4, err := strconv.ParseInt(items[4], 10, 64)
+			if err != nil {
+				return merry.Wrap(err)
+			}
+			res, err := tx.Exec(
+				"INSERT INTO raw_nodes (host, port) VALUES (?, ?), (?, ?) ON CONFLICT DO NOTHING",
+				items[0], port1, items[3], port4)
+			if err != nil {
+				return merry.Wrap(err)
+			}
+			count += res.RowsAffected()
+			if count%1000 == 0 {
+				log.Printf("%d nodes", count)
+			}
+		}
+		if err = rows.Err(); err != nil {
+			return merry.Wrap(err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return merry.Wrap(err)
+		}
+
+		log.Printf("done, %d node(s)", count)
+		return nil
+	}
+
 	db, err := sql.Open("sqlite3", "blockchain_v1_mainnet.sqlite")
 	if err != nil {
 		return merry.Wrap(err)
