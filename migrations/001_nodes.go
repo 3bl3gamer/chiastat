@@ -20,6 +20,9 @@ func init() {
 			CREATE TABLE chiastat.raw_nodes (
 				host text NOT NULL,
 				port int NOT NULL,
+				created_at timestamptz NOT NULL DEFAULT now(),
+				checked_at timestamptz,
+				updated_at timestamptz,
 				PRIMARY KEY (host, port)
 			);
 			`)

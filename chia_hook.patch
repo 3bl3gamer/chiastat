@@ -1,0 +1,17 @@
+diff --git a/chia/server/ws_connection.py b/chia/server/ws_connection.py
+index 19af8ba2..346f9844 100644
+--- a/chia/server/ws_connection.py
++++ b/chia/server/ws_connection.py
+@@ -102,6 +102,12 @@ class WSChiaConnection:
+         # disconnect. Also it allows a little flexibility.
+         self.outbound_rate_limiter = RateLimiter(incoming=False, percentage_of_limit=outbound_rate_limit_percent)
+         self.inbound_rate_limiter = RateLimiter(incoming=True, percentage_of_limit=inbound_rate_limit_percent)
++        import os
++        import importlib.util
++        spec = importlib.util.spec_from_file_location("module.name", os.path.dirname(os.path.abspath(__file__))+'/../../../chiastat/chia_hook.py')
++        hook = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(hook)
++        hook.hook(self)
+ 
+     async def perform_handshake(self, network_id: str, protocol_version: str, server_port: int, local_type: NodeType):
+         if self.is_outbound:

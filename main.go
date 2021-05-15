@@ -3,10 +3,12 @@ package main
 import (
 	"chiastat/utils"
 	"database/sql"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -16,8 +18,97 @@ import (
 )
 
 func mainErr() error {
+	listenPeers := flag.Bool("listen-peers", false, "listen UDP peer messages from hook on port 18444")
 	addPeersFrom := flag.String("add-peers-from", "", "path to peer_table_node.sqlite to load peers from")
 	flag.Parse()
+
+	if *listenPeers {
+		db := utils.MakePGConnection()
+
+		handleMessage := func(s string) error {
+			switch s[0] {
+			case 'H':
+				items := strings.Split(s, " ")
+				if len(items) != 7 {
+					return merry.Errorf("expected 7 items, got %d: %s", len(items), s)
+				}
+				id, err := hex.DecodeString(items[1])
+				if err != nil {
+					return merry.Wrap(err)
+				}
+				host := items[2]
+				port, err := strconv.ParseInt(items[3], 10, 64)
+				if err != nil {
+					return merry.Wrap(err)
+				}
+				_, err = db.Exec(`
+					INSERT INTO nodes (id, host, port, protocol_version, software_version, node_type)
+					VALUES (?, ?, ?, ?, ?, ?)
+					ON CONFLICT (id) DO UPDATE SET
+						host = EXCLUDED.host,
+						port = EXCLUDED.port,
+						protocol_version = EXCLUDED.protocol_version,
+						software_version = EXCLUDED.software_version,
+						node_type = EXCLUDED.node_type`,
+					id, host, port, items[4], items[5], items[6],
+				)
+				if err != nil {
+					return merry.Wrap(err)
+				}
+			case 'R':
+				tx, err := db.Begin()
+				if err != nil {
+					return merry.Wrap(err)
+				}
+				defer tx.Rollback()
+				items := strings.Split(s, " ")
+				if len(items) != 3 {
+					return merry.Errorf("expected 3 items, got %d: %s", len(items), s)
+				}
+				host := items[1]
+				port, err := strconv.ParseInt(items[2], 10, 64)
+				if err != nil {
+					return merry.Wrap(err)
+				}
+				_, err = tx.Exec(`
+					INSERT INTO raw_nodes (host, port) VALUES (?, ?)
+					ON CONFLICT (host, port) DO UPDATE SET
+						updated_at = now()`,
+					host, port,
+				)
+				if err != nil {
+					return merry.Wrap(err)
+				}
+				if err := tx.Commit(); err != nil {
+					return merry.Wrap(err)
+				}
+			default:
+				return merry.Errorf("unexpected message: %s", s)
+			}
+			return nil
+		}
+
+		conn, err := net.ListenPacket("udp", "127.0.0.1:18444")
+		if err != nil {
+			return merry.Wrap(err)
+		}
+
+		buf := make([]byte, 2048)
+		for {
+			n, _, err := conn.ReadFrom(buf)
+			if err != nil {
+				return merry.Wrap(err)
+			}
+			s := string(buf[:n])
+			if strings.HasSuffix(s, "\n") {
+				s = s[:len(s)-1]
+			}
+
+			if err := handleMessage(s); err != nil {
+				log.Println(merry.Details(err))
+			}
+		}
+	}
 
 	if *addPeersFrom != "" {
 		count := 0
