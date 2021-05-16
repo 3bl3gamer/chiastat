@@ -44,9 +44,10 @@ def hook_inner(ws):
         try:
             if msg is not None and ProtocolMessageTypes(msg.type) == ProtocolMessageTypes.handshake:
                 handshake = Handshake.from_bytes(msg.data)
-                ep('handshake', handshake.protocol_version)
+                ep('handshake', handshake.protocol_version, 'is out:', ws.is_outbound)
                 node_type_name = NodeType(handshake.node_type).name
-                send(f'H {ws.peer_node_id} {ws.peer_host} {ws.peer_port} {handshake.protocol_version} {handshake.software_version} {node_type_name}')
+                if not ws.is_outbound:
+                    send(f'H {ws.peer_node_id} {ws.peer_host} {ws.peer_port} {handshake.protocol_version} {handshake.software_version} {node_type_name}')
         except Exception as ex:
             ep(ex)
         return msg

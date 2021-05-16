@@ -29,6 +29,6 @@ fi
 
 if [ $restart = true ]; then
     for name in chia chiastat-listen; do
-        sudo systemctl restart $name
+        systemctl restart $name
     done
 fi
