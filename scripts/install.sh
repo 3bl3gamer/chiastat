@@ -2,14 +2,12 @@
 set -e
 
 repo_dir=`dirname "$0"`"/.."
-
-static_dir="${1%/}"
+repo_dir=`realpath "$repo_dir"`
 
 function usage {
-    echo "usage: $0 static_dir [--migrate] [--restart]"
+    echo "usage: $0 [--migrate] [--restart]"
 }
-if [ "$0" == "-h" ] || [ "$0" == "--help" ]; then usage; exit 2; fi
-if [ "$static_dir" == "" ]; then usage; exit 1; fi
+if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then usage; exit 2; fi
 
 migrate=false
 restart=false
@@ -20,7 +18,7 @@ for i in "$@"; do
     esac
 done
 
-cd "$repo_dir/chia-blockchain/"
+cd "$repo_dir/../chia-blockchain/"
 git checkout .
 git apply "$repo_dir/chia_hook.patch"
 cd "$repo_dir"
