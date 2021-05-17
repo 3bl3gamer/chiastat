@@ -62,7 +62,7 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 				_, err := tx.Query(&nodes, `
 					SELECT host, port FROM raw_nodes
 					WHERE checked_at IS NULL
-					   OR (checked_at < now() - INTERVAL '5 seconds'
+					   OR (checked_at < now() - INTERVAL '5 hours'
 					       AND updated_at > now() - INTERVAL '7 days')
 					ORDER BY checked_at ASC NULLS FIRST
 					LIMIT ?
@@ -73,7 +73,9 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 				if len(nodes) == 0 {
 					return nil
 				}
-				_, err = tx.Exec(`UPDATE raw_nodes SET checked_at = NOW() WHERE (host,port) IN (?)`, NodeAddrListAsPGTuple(nodes))
+				_, err = tx.Exec(`
+					UPDATE raw_nodes SET checked_at = NOW() WHERE (host,port) IN (?)`,
+					NodeAddrListAsPGTuple(nodes))
 				return merry.Wrap(err)
 			})
 			if err != nil {
@@ -196,7 +198,7 @@ func startNodesChecker(db *pg.DB, nodesInChan chan *NodeAddr, nodesOutChan chan 
 					log.Printf("checker send error: %s", err)
 					break
 				}
-				if atomic.AddInt64(&countMsgOut, 1)%1 == 0 {
+				if atomic.AddInt64(&countMsgOut, 1)%1000 == 0 {
 					log.Printf("UPDATE: msg out=%d, in=%d, out rpm=%.1f",
 						countMsgOut, countMsgIn, float64(countMsgOut)/float64(time.Now().Unix()-stamp)*60)
 				}
@@ -223,7 +225,7 @@ func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worke
 		err := utils.SaveChunked(db, chunkSize, nodesChanI, func(tx *pg.Tx, items []interface{}) error {
 			for _, nodeI := range items {
 				node := nodeI.(*Node)
-				_, err := db.Exec(`
+				_, err := tx.Exec(`
 					INSERT INTO nodes (id, host, port, protocol_version, software_version, node_type, updated_at)
 					VALUES (?, ?, ?, ?, ?, ?, now())
 					ON CONFLICT (id) DO UPDATE SET
@@ -292,7 +294,7 @@ func CMDUpdateNodes() error {
 	rawNodesOutChan := make(chan *NodeAddr, 16)
 
 	workers := []utils.Worker{
-		startOldNodesLoader(db, nodesInChan, 32),
+		startOldNodesLoader(db, nodesInChan, 512),
 		startNodesChecker(db, nodesInChan, nodesOutChan, rawNodesOutChan),
 		startNodesSaver(db, nodesOutChan, 32),
 		startRawNodesSaver(db, rawNodesOutChan, 512),

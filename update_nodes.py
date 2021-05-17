@@ -1,3 +1,5 @@
+#!/bin/python3
+
 import sys
 import os
 work_dir = os.path.dirname(os.path.realpath(__file__))
@@ -12,6 +14,7 @@ import aiohttp
 import ssl
 import ipaddress
 import io
+import time
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
@@ -36,17 +39,21 @@ def sock_connect():
     sock.connect(('127.0.0.1', 18445))
     sock.setblocking(False)
     sock_is_connected = True
-def send(msg, retry=True):
+def send(msg):
     global sock_is_connected
-    if not sock_is_connected:
-        sock_connect()
-    try:
-        sock.send((msg+'\n').encode())
-    except OSError as ex:
-        print(ex)
-        sock_is_connected = False
-        if retry:
-            send(msg, retry=False)
+    while True:
+        try:
+            if not sock_is_connected:
+                sock_connect()
+            sock.sendall((msg+'\n').encode())
+            break
+        except BlockingIOError as ex:
+            print('socket blocked, waiting...')
+            time.sleep(1)
+        except (OSError, ConnectionResetError) as ex:
+            print('socket send failed:', ex)
+            time.sleep(1)
+            sock_is_connected = False
 
 
 def ssl_context_for_client(
@@ -69,6 +76,7 @@ async def get_info_from(target_host, target_port):
     finally:
         await session.close()
 
+peer_times = {}
 async def get_info_from_inner(target_host, target_port, session):
     local_type = NodeType.FULL_NODE
     self_port = 8444
@@ -120,7 +128,7 @@ async def get_info_from_inner(target_host, target_port, session):
     async def _read_one_message():
         nonlocal handshake
         msg = await f()
-        if ProtocolMessageTypes(msg.type) == ProtocolMessageTypes.handshake:
+        if msg is not None and ProtocolMessageTypes(msg.type) == ProtocolMessageTypes.handshake:
             handshake = Handshake.from_bytes(msg.data)
         return msg
     connection._read_one_message = _read_one_message
@@ -133,46 +141,77 @@ async def get_info_from_inner(target_host, target_port, session):
     )
     assert handshake_res is True
 
-    peers_resp = await connection.request_peers(RequestPeers())
-    if peers_resp is None:
-        peers = []
-    else:
-        peers = peers_resp.peer_list
+    all_peers = []
+    for iter in range(3):
+        peers_resp = await connection.request_peers(RequestPeers())
+        if peers_resp is None:
+            break
+        else:
+            all_peers.extend(peers_resp.peer_list)
+
+    # print(f'{target_host}, {len(all_peers)}')
+    peers = []
+    now = time.time()
+    thresh = now - 5*60
+    for peer in all_peers:
+        key = f'{peer.host} {peer.port}'
+        stamp = peer_times.get(key)
+        if stamp is None or stamp < thresh:
+            peers.append(peer)
+            peer_times[key] = now
+    print(f'using peers: {len(peers)}/{len(all_peers)}')
     return (peer_id, handshake, peers)
 
+count_total = 0
+count_ok = 0
 async def try_get_info_from(host, port):
+    global count_total
+    global count_ok
     try:
-        return await get_info_from(host, port)
-    except (asyncio.TimeoutError, aiohttp.client_exceptions.ClientConnectorError, aiohttp.client_exceptions.ServerDisconnectedError):
-        print(f'fail  {host}:{port}')
+        res = await get_info_from(host, port)
+        count_ok += 1
+        return res
+    except (asyncio.TimeoutError, aiohttp.client_exceptions.ClientConnectorError, aiohttp.client_exceptions.ServerDisconnectedError, ConnectionResetError) as ex:
+        # print(f'fail {host}:{port}', ex, type(ex))
         return None
+    finally:
+        count_total += 1
+        if count_total % 100 == 0:
+            print(f'checked {count_total} nodes, {count_ok} ok')
 
 async def checking_worker(in_queue, out_queue):
     while True:
-        host, port = await in_queue.get()
-        for iter in range(3):
+        try:
+            host, port = await in_queue.get()
             id_hs_peers = await try_get_info_from(host, port)
-            if id_hs_peers is None:
-                break
-            peer_id, hs, peers = id_hs_peers
-            if iter == 0:
+            if id_hs_peers is not None:
+                peer_id, hs, peers = id_hs_peers
                 await out_queue.put((peer_id, host, port, hs))
-            await out_queue.put((peers,))
-            if len(peers) == 0:
-                break
-        in_queue.task_done()
+                await out_queue.put((peers,))
+            in_queue.task_done()
+        except Exception as ex:
+            print('checking_worker', ex)
 
 async def sending_worker(queue):
     while True:
-        item = await queue.get()
-        if len(item) == 4:
-            node_id, host, port, handshake = item
-            node_type_name = NodeType(handshake.node_type).name
-            send(f'H {node_id} {host} {port} {handshake.protocol_version} {handshake.software_version} {node_type_name}')
-        else:
-            peers = item[0]
-            send(f'R {" ".join(f"{p.host} {p.port}" for p in peers)}')
-        queue.task_done()
+        try:
+            item = await queue.get()
+            if len(item) == 4:
+                node_id, host, port, handshake = item
+                node_type_name = NodeType(handshake.node_type).name
+                send(f'H {node_id} {host} {port} {handshake.protocol_version} {handshake.software_version} {node_type_name}')
+            else:
+                peers = item[0]
+                if len(peers) > 0:
+                    send(f'R {" ".join(f"{p.host} {p.port}" for p in peers)}')
+            queue.task_done()
+        except Exception as ex:
+            print('sending_worker', ex)
+
+async def queue_sizes_worker(in_queue, out_queue):
+    while True:
+        print(f'queues: in={in_queue.qsize()}, out={out_queue.qsize()}')
+        await asyncio.sleep(5)
 
 async def main():
     global sock_is_connected
@@ -181,20 +220,19 @@ async def main():
     old_addrs_queue = asyncio.Queue(maxsize=128)
     new_data_queue = asyncio.Queue(maxsize=128)
 
-    check_tasks = [asyncio.create_task(checking_worker(old_addrs_queue, new_data_queue)) for i in range(task_count)]
-    out_task = asyncio.create_task(sending_worker(new_data_queue))
+    [asyncio.create_task(checking_worker(old_addrs_queue, new_data_queue)) for i in range(task_count)]
+    asyncio.create_task(sending_worker(new_data_queue))
+    asyncio.create_task(queue_sizes_worker(old_addrs_queue, new_data_queue))
 
     while True:
-        print(f'iter: {old_addrs_queue.qsize()}/{old_addrs_queue.maxsize} {new_data_queue.qsize()}/{new_data_queue.maxsize}')
-
         with io.BytesIO() as buffer:
             while True:
                 try:
                     if not sock_is_connected:
                         sock_connect()
                     resp = sock.recv(100)
-                except ConnectionRefusedError:
-                    print('socket connection refused')
+                except (ConnectionRefusedError, ConnectionResetError) as ex:
+                    print('socket connection failed:', ex)
                     buffer.truncate(0)
                     await asyncio.sleep(5)
                 except BlockingIOError:
@@ -208,15 +246,23 @@ async def main():
                     buffer.seek(0)
                     start_index = 0
                     for line in buffer:
+                        if line[len(line)-1] != ord('\n'):
+                            buffer.seek(start_index)
+                            buffer.write(line)
+                            break
                         start_index += len(line)
                         msg = line.decode().removesuffix('\n')
                         if msg[0] == 'C':
-                            _, host, port = msg.split(' ')
-                            await old_addrs_queue.put((host, int(port)))
+                            try:
+                                _, host, port = msg.split(' ')
+                            except ValueError:
+                                print(f'wrong message: {msg}')
+                            else:
+                                await old_addrs_queue.put((host, int(port)))
                         else:
-                            raise ValueError('unexpected message: ' + msg)
+                            raise ValueError(f'unexpected message ({msg[0]}): {msg}')
 
-                    if start_index:
+                    if start_index > 0:
                         buffer.seek(start_index)
                         remaining = buffer.read()
                         buffer.truncate(0)

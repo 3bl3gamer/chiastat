@@ -48,7 +48,7 @@ func printUsage() {
 	for name := range commands {
 		names = append(names, name)
 	}
-	fmt.Printf("usage: %s [%s]", os.Args[0], strings.Join(names, "|"))
+	fmt.Printf("usage: %s [%s]\n", os.Args[0], strings.Join(names, "|"))
 }
 
 func main() {

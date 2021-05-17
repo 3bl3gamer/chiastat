@@ -47,35 +47,35 @@ func CMDListenNodes() error {
 			if err != nil {
 				return merry.Wrap(err)
 			}
-		case 'R':
-			tx, err := db.Begin()
-			if err != nil {
-				return merry.Wrap(err)
-			}
-			defer tx.Rollback()
-			items := strings.Split(s, " ")
-			if len(items)%2 != 1 {
-				return merry.Errorf("expected odd items count, got %d: %s", len(items), s)
-			}
-			for i := 1; i < len(items); i += 2 {
-				host := items[i]
-				port, err := strconv.ParseInt(items[i+1], 10, 64)
-				if err != nil {
-					return merry.Wrap(err)
-				}
-				_, err = tx.Exec(`
-					INSERT INTO raw_nodes (host, port, updated_at) VALUES (?, ?, now())
-					ON CONFLICT (host, port) DO UPDATE SET
-						updated_at = now()`,
-					host, port,
-				)
-				if err != nil {
-					return merry.Wrap(err)
-				}
-			}
-			if err := tx.Commit(); err != nil {
-				return merry.Wrap(err)
-			}
+		// case 'R':
+		// 	tx, err := db.Begin()
+		// 	if err != nil {
+		// 		return merry.Wrap(err)
+		// 	}
+		// 	defer tx.Rollback()
+		// 	items := strings.Split(s, " ")
+		// 	if len(items)%2 != 1 {
+		// 		return merry.Errorf("expected odd items count, got %d: %s", len(items), s)
+		// 	}
+		// 	for i := 1; i < len(items); i += 2 {
+		// 		host := items[i]
+		// 		port, err := strconv.ParseInt(items[i+1], 10, 64)
+		// 		if err != nil {
+		// 			return merry.Wrap(err)
+		// 		}
+		// 		_, err = tx.Exec(`
+		// 			INSERT INTO raw_nodes (host, port, updated_at) VALUES (?, ?, now())
+		// 			ON CONFLICT (host, port) DO UPDATE SET
+		// 				updated_at = now()`,
+		// 			host, port,
+		// 		)
+		// 		if err != nil {
+		// 			return merry.Wrap(err)
+		// 		}
+		// 	}
+		// 	if err := tx.Commit(); err != nil {
+		// 		return merry.Wrap(err)
+		// 	}
 		default:
 			return merry.Errorf("unexpected message: %s", s)
 		}

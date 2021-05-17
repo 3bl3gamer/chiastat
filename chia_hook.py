@@ -59,11 +59,11 @@ def hook_inner(ws):
         res = await perform_handshake_orig(network_id, protocol_version, server_port, local_type)
         try:
             ep('phs', network_id, protocol_version, 'is out:', ws.is_outbound, ws.local_type, '->', res.node_type)
-            for i in range(3):
-                peers_resp = await ws.request_peers(RequestPeers())
-                ep('peers:', peers_resp and len(peers_resp.peer_list))
-                if peers_resp is not None:
-                    send(f'R {" ".join(f"{p.host} {p.port}" for p in peers_resp.peer_list)}')
+            # for i in range(3):
+            #     peers_resp = await ws.request_peers(RequestPeers())
+            #     ep('peers:', peers_resp and len(peers_resp.peer_list))
+            #     if peers_resp is not None:
+            #         send(f'R {" ".join(f"{p.host} {p.port}" for p in peers_resp.peer_list)}')
         except Exception as ex:
             ep(ex)
         return res
