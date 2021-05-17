@@ -6,9 +6,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"log"
-	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -65,8 +64,7 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 					   OR (checked_at < now() - INTERVAL '5 hours'
 					       AND updated_at > now() - INTERVAL '7 days')
 					ORDER BY checked_at ASC NULLS FIRST
-					LIMIT ?
-					FOR UPDATE`, chunkSize)
+					LIMIT ?`, chunkSize)
 				if err != nil {
 					return merry.Wrap(err)
 				}
@@ -96,21 +94,37 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 }
 
 func startNodesChecker(db *pg.DB, nodesInChan chan *NodeAddr, nodesOutChan chan *Node, rawNodesOutChan chan *NodeAddr) utils.Worker {
-	worker := utils.NewSimpleWorker(1)
+	worker := utils.NewSimpleWorker(2)
 
+	inPacketNum := int64(-1)
+	applyPacketNum := func(num string) error {
+		packetNum, err := strconv.ParseInt(num, 10, 64)
+		if err != nil {
+			return merry.Wrap(err)
+		}
+		if inPacketNum == -1 && packetNum != inPacketNum+1 {
+			log.Printf("UPDATE: WARN: expected packet num %d, got %d (%d)",
+				inPacketNum+1, packetNum, packetNum-(inPacketNum+1))
+		}
+		inPacketNum = packetNum
+		return nil
+	}
 	handleMessage := func(s string) error {
 		switch s[0] {
 		case 'H':
 			items := strings.Split(s, " ")
-			if len(items) != 7 {
-				return merry.Errorf("expected 7 items, got %d: %s", len(items), s)
+			if len(items) != 8 {
+				return merry.Errorf("expected 8 items, got %d: %s", len(items), s)
 			}
-			id, err := hex.DecodeString(items[1])
+			if err := applyPacketNum(items[1]); err != nil {
+				return merry.Wrap(err)
+			}
+			id, err := hex.DecodeString(items[2])
 			if err != nil {
 				return merry.Wrap(err)
 			}
-			host := items[2]
-			port, err := strconv.ParseInt(items[3], 10, 64)
+			host := items[3]
+			port, err := strconv.ParseInt(items[4], 10, 64)
 			if err != nil {
 				return merry.Wrap(err)
 			}
@@ -118,21 +132,24 @@ func startNodesChecker(db *pg.DB, nodesInChan chan *NodeAddr, nodesOutChan chan 
 				ID:              id,
 				Host:            host,
 				Port:            port,
-				ProtocolVersion: items[4],
-				SoftwareVersion: items[5],
-				NodeType:        items[6],
+				ProtocolVersion: items[5],
+				SoftwareVersion: items[6],
+				NodeType:        items[7],
 			}
 		case 'R':
+			items := strings.Split(s, " ")
+			if len(items)%2 != 0 {
+				return merry.Errorf("expected even items count, got %d: %s", len(items), s)
+			}
+			if err := applyPacketNum(items[1]); err != nil {
+				return merry.Wrap(err)
+			}
 			tx, err := db.Begin()
 			if err != nil {
 				return merry.Wrap(err)
 			}
 			defer tx.Rollback()
-			items := strings.Split(s, " ")
-			if len(items)%2 != 1 {
-				return merry.Errorf("expected odd items count, got %d: %s", len(items), s)
-			}
-			for i := 1; i < len(items); i += 2 {
+			for i := 2; i < len(items); i += 2 {
 				host := items[i]
 				port, err := strconv.ParseInt(items[i+1], 10, 64)
 				if err != nil {
@@ -155,57 +172,106 @@ func startNodesChecker(db *pg.DB, nodesInChan chan *NodeAddr, nodesOutChan chan 
 	stamp := time.Now().Unix()
 	countMsgOut := int64(0)
 	countMsgIn := int64(0)
+
 	go func() {
 		defer worker.Done()
 
-		ln, err := net.Listen("tcp", "127.0.0.1:18445")
+		fReq, err := os.OpenFile("update_nodes_request.fifo", os.O_WRONLY, 0)
 		if err != nil {
 			worker.AddError(err)
 			return
 		}
-		for {
-			conn, err := ln.Accept()
+		defer fReq.Close()
+
+		for node := range nodesInChan {
+			_, err := fmt.Fprintf(fReq, "C %s %d\n", node.Host, node.Port)
 			if err != nil {
-				log.Printf("accept error: %s", err)
-				continue
+				log.Printf("checker send error: %s", err)
+				break
 			}
-
-			go func() {
-				buf := bufio.NewReader(conn)
-				defer conn.Close()
-				for {
-					msg, err := buf.ReadString('\n')
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						log.Printf("checker recv error: %s", err)
-						break
-					}
-					if strings.HasSuffix(msg, "\n") {
-						msg = msg[:len(msg)-1]
-					}
-					if err := handleMessage(msg); err != nil {
-						log.Println(merry.Details(err))
-					}
-					atomic.AddInt64(&countMsgIn, 1)
-				}
-			}()
-
-			for node := range nodesInChan {
-				_, err := fmt.Fprintf(conn, "C %s %d\n", node.Host, node.Port)
-				if err != nil {
-					log.Printf("checker send error: %s", err)
-					break
-				}
-				if atomic.AddInt64(&countMsgOut, 1)%1000 == 0 {
-					log.Printf("UPDATE: msg out=%d, in=%d, out rpm=%.1f",
-						countMsgOut, countMsgIn, float64(countMsgOut)/float64(time.Now().Unix()-stamp)*60)
-				}
+			if atomic.AddInt64(&countMsgOut, 1)%1000 == 0 {
+				log.Printf("UPDATE: msg out=%d, in=%d, out rpm=%.1f",
+					countMsgOut, countMsgIn, float64(countMsgOut)/float64(time.Now().Unix()-stamp)*60)
 			}
-			conn.Close()
 		}
 	}()
+
+	go func() {
+		defer worker.Done()
+
+		for {
+			fRes, err := os.OpenFile("update_nodes_response.fifo", os.O_RDONLY, 0)
+			if err != nil {
+				worker.AddError(err)
+				return
+			}
+			defer fRes.Close()
+
+			scanner := bufio.NewScanner(fRes)
+			for scanner.Scan() {
+				if err := handleMessage(scanner.Text()); err != nil {
+					log.Println(merry.Details(err))
+				}
+				atomic.AddInt64(&countMsgIn, 1)
+			}
+			if err := scanner.Err(); err != nil {
+				worker.AddError(err)
+				return
+			}
+		}
+	}()
+
+	// go func() {
+	// 	defer worker.Done()
+
+	// 	ln, err := net.Listen("tcp", "127.0.0.1:18445")
+	// 	if err != nil {
+	// 		worker.AddError(err)
+	// 		return
+	// 	}
+	// 	for {
+	// 		conn, err := ln.Accept()
+	// 		if err != nil {
+	// 			log.Printf("accept error: %s", err)
+	// 			continue
+	// 		}
+
+	// 		go func() {
+	// 			buf := bufio.NewReader(conn)
+	// 			defer conn.Close()
+	// 			for {
+	// 				msg, err := buf.ReadString('\n')
+	// 				if err == io.EOF {
+	// 					break
+	// 				}
+	// 				if err != nil {
+	// 					log.Printf("checker recv error: %s", err)
+	// 					break
+	// 				}
+	// 				if strings.HasSuffix(msg, "\n") {
+	// 					msg = msg[:len(msg)-1]
+	// 				}
+	// 				if err := handleMessage(msg); err != nil {
+	// 					log.Println(merry.Details(err))
+	// 				}
+	// 				atomic.AddInt64(&countMsgIn, 1)
+	// 			}
+	// 		}()
+
+	// 		for node := range nodesInChan {
+	// 			_, err := fmt.Fprintf(conn, "C %s %d\n", node.Host, node.Port)
+	// 			if err != nil {
+	// 				log.Printf("checker send error: %s", err)
+	// 				break
+	// 			}
+	// 			if atomic.AddInt64(&countMsgOut, 1)%1000 == 0 || countMsgIn%100 == 0 {
+	// 				log.Printf("UPDATE: msg out=%d, in=%d, out rpm=%.1f",
+	// 					countMsgOut, countMsgIn, float64(countMsgOut)/float64(time.Now().Unix()-stamp)*60)
+	// 			}
+	// 		}
+	// 		conn.Close()
+	// 	}
+	// }()
 	return worker
 }
 

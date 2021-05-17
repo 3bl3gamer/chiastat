@@ -7,7 +7,6 @@ sys.path.append(work_dir + '/chia-blockchain')
 
 # https://github.com/Chia-Network/chia-blockchain/blob/9cc908678b1255c9a520c322302ba35084676e08/chia/server/server.py
 
-import socket
 import logging
 import asyncio
 import aiohttp
@@ -30,31 +29,10 @@ from chia.protocols.protocol_message_types import ProtocolMessageTypes
 from chia.protocols.full_node_protocol import RequestPeers
 
 
-sock_is_connected = False
-def sock_connect():
-    global sock
-    global sock_is_connected
-    print('connecting to socket')
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect(('127.0.0.1', 18445))
-    sock.setblocking(False)
-    sock_is_connected = True
+f_req = os.open('update_nodes_request.fifo', os.O_RDONLY | os.O_NONBLOCK)
+f_res = os.open('update_nodes_response.fifo', os.O_WRONLY)
 def send(msg):
-    global sock_is_connected
-    while True:
-        try:
-            if not sock_is_connected:
-                sock_connect()
-            sock.sendall((msg+'\n').encode())
-            break
-        except BlockingIOError as ex:
-            print('socket blocked, waiting...')
-            time.sleep(1)
-        except (OSError, ConnectionResetError) as ex:
-            print('socket send failed:', ex)
-            time.sleep(1)
-            sock_is_connected = False
-
+    os.write(f_res, (msg+'\n').encode())
 
 def ssl_context_for_client(
     ca_cert: Path,
@@ -184,7 +162,9 @@ async def checking_worker(in_queue, out_queue):
         try:
             host, port = await in_queue.get()
             id_hs_peers = await try_get_info_from(host, port)
-            if id_hs_peers is not None:
+            if id_hs_peers is None:
+                await out_queue.put('fail')
+            else:
                 peer_id, hs, peers = id_hs_peers
                 await out_queue.put((peer_id, host, port, hs))
                 await out_queue.put((peers,))
@@ -193,17 +173,23 @@ async def checking_worker(in_queue, out_queue):
             print('checking_worker', ex)
 
 async def sending_worker(queue):
+    packet_num = 0
     while True:
         try:
             item = await queue.get()
-            if len(item) == 4:
+            if item == 'fail':
+                send(f'F {packet_num}')
+                packet_num += 1
+            elif len(item) == 4:
                 node_id, host, port, handshake = item
                 node_type_name = NodeType(handshake.node_type).name
-                send(f'H {node_id} {host} {port} {handshake.protocol_version} {handshake.software_version} {node_type_name}')
+                send(f'H {packet_num} {node_id} {host} {port} {handshake.protocol_version} {handshake.software_version} {node_type_name}')
+                packet_num += 1
             else:
                 peers = item[0]
                 if len(peers) > 0:
-                    send(f'R {" ".join(f"{p.host} {p.port}" for p in peers)}')
+                    send(f'R {packet_num} {" ".join(f"{p.host} {p.port}" for p in peers)}')
+                    packet_num += 1
             queue.task_done()
         except Exception as ex:
             print('sending_worker', ex)
@@ -214,8 +200,6 @@ async def queue_sizes_worker(in_queue, out_queue):
         await asyncio.sleep(5)
 
 async def main():
-    global sock_is_connected
-
     task_count = 128
     old_addrs_queue = asyncio.Queue(maxsize=128)
     new_data_queue = asyncio.Queue(maxsize=128)
@@ -224,52 +208,37 @@ async def main():
     asyncio.create_task(sending_worker(new_data_queue))
     asyncio.create_task(queue_sizes_worker(old_addrs_queue, new_data_queue))
 
+    remaining_chunk = b''
     while True:
-        with io.BytesIO() as buffer:
-            while True:
-                try:
-                    if not sock_is_connected:
-                        sock_connect()
-                    resp = sock.recv(100)
-                except (ConnectionRefusedError, ConnectionResetError) as ex:
-                    print('socket connection failed:', ex)
-                    buffer.truncate(0)
-                    await asyncio.sleep(5)
-                except BlockingIOError:
-                    await asyncio.sleep(1)
-                else:
-                    if len(resp) == 0:
-                        print('socket seems disconnected')
-                        sock_is_connected = False
-                        continue
-                    buffer.write(resp)
-                    buffer.seek(0)
-                    start_index = 0
-                    for line in buffer:
-                        if line[len(line)-1] != ord('\n'):
-                            buffer.seek(start_index)
-                            buffer.write(line)
-                            break
-                        start_index += len(line)
-                        msg = line.decode().removesuffix('\n')
-                        if msg[0] == 'C':
-                            try:
-                                _, host, port = msg.split(' ')
-                            except ValueError:
-                                print(f'wrong message: {msg}')
-                            else:
-                                await old_addrs_queue.put((host, int(port)))
-                        else:
-                            raise ValueError(f'unexpected message ({msg[0]}): {msg}')
+        try:
+            chunk = os.read(f_req, 1024)
+        except BlockingIOError:
+            await asyncio.sleep(1)
+            continue
+        if chunk == b'':
+            await asyncio.sleep(1)
+            continue
 
-                    if start_index > 0:
-                        buffer.seek(start_index)
-                        remaining = buffer.read()
-                        buffer.truncate(0)
-                        buffer.seek(0)
-                        buffer.write(remaining)
-                    else:
-                        buffer.seek(0, 2)
+        chunk = remaining_chunk + chunk
+        remaining_chunk = b''
+        pos = 0
+        while True:
+            end_pos = chunk.find(b'\n', pos)
+            if end_pos == -1:
+                remaining_chunk = chunk[pos:]
+                break
+            msg = chunk[pos:end_pos].decode()
+            pos = end_pos + 1
+            print(msg)
+            if msg[0] == 'C':
+                try:
+                    _, host, port = msg.split(' ')
+                except ValueError:
+                    raise ValueError(f'wrong message: {msg}')
+                else:
+                    await old_addrs_queue.put((host, int(port)))
+            else:
+                raise ValueError(f'unexpected message ({msg[0]}): {msg}')
 
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
