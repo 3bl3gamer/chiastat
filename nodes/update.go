@@ -310,13 +310,12 @@ func tryGetCountry(gdb, gdb6 *geoip.GeoIP, host string, tryResolve bool) *string
 			return nil
 		}
 	}
-	if len(hostIP) == net.IPv4len {
-		if code, _ := gdb.GetCountry(host); code != "" {
+	if hostIP.To4() == nil {
+		if code, _ := gdb6.GetCountry_v6(host); code != "" {
 			return &code
 		}
-	}
-	if len(hostIP) == net.IPv6len {
-		if code, _ := gdb6.GetCountry_v6(host); code != "" {
+	} else {
+		if code, _ := gdb.GetCountry(host); code != "" {
 			return &code
 		}
 	}
@@ -441,8 +440,8 @@ func CMDUpdateNodes() error {
 	nodeAddrs := make(chan *NodeAddr, 16)
 	nodesNoLoc := make(chan *Node, 16)
 	rawNodesNoLoc := make(chan *NodeAddr, 16)
-	nodesOut := make(chan *Node, 16)
-	rawNodesOut := make(chan *NodeAddr, 16)
+	nodesOut := make(chan *Node, 32)
+	rawNodesOut := make(chan *NodeAddr, 256)
 
 	workers := []utils.Worker{
 		startOldNodesLoader(db, nodeAddrs, 512),

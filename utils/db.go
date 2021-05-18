@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/abh/geoip"
 	"github.com/ansel1/merry"
@@ -23,6 +24,7 @@ func MakeGeoIPConnection() (*geoip.GeoIP, *geoip.GeoIP, error) {
 	if err != nil {
 		return nil, nil, merry.Wrap(err)
 	}
+	fmt.Println(gdb.GetCountry("97.113.72.89"))
 	return gdb, gdb6, nil
 }
 

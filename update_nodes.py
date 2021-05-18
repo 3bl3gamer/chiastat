@@ -130,7 +130,7 @@ async def get_info_from_inner(target_host, target_port, session):
     # print(f'{target_host}, {len(all_peers)}')
     peers = []
     now = time.time()
-    thresh = now - 5*60
+    thresh = now - 30*60
     for peer in all_peers:
         key = f'{peer.host} {peer.port}'
         stamp = peer_times.get(key)
@@ -152,6 +152,8 @@ async def try_get_info_from(host, port):
     except (asyncio.TimeoutError, aiohttp.client_exceptions.ClientConnectorError, aiohttp.client_exceptions.ServerDisconnectedError, ConnectionResetError) as ex:
         # print(f'fail {host}:{port}', ex, type(ex))
         return None
+    except Exception as ex:
+        print('ERROR: unexpected:', ex)
     finally:
         count_total += 1
         if count_total % 100 == 0:
@@ -228,11 +230,11 @@ async def main():
                 try:
                     _, host, port = msg.split(' ')
                 except ValueError:
-                    raise ValueError(f'wrong message: {msg}')
+                    print(f'ERROR: wrong message: {msg}')
                 else:
                     await old_addrs_queue.put((host, int(port)))
             else:
-                raise ValueError(f'unexpected message ({msg[0]}): {msg}')
+                print(f'ERROR: unexpected message ({msg[0]}): {msg}')
 
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)

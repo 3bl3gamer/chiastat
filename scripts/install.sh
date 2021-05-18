@@ -23,8 +23,8 @@ git checkout .
 git apply "$repo_dir/chia_hook.patch"
 cd "$repo_dir"
 
-mkfifo update_nodes_request.fifo
-mkfifo update_nodes_response.fifo
+[ -p update_nodes_request.fifo ] || mkfifo update_nodes_request.fifo
+[ -p update_nodes_response.fifo ] || mkfifo update_nodes_response.fifo
 
 if [ $migrate = true ]; then
     go run "$repo_dir"/migrations/*.go
