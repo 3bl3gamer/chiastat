@@ -49,22 +49,79 @@ func (l NodeAddrListAsPGTuple) AppendValue(b []byte, flags int) ([]byte, error) 
 	return b, nil
 }
 
+type NodeListAsPGIDs []*Node
+
+func (l NodeListAsPGIDs) AppendValue(b []byte, flags int) ([]byte, error) {
+	// flags: https://github.com/go-pg/pg/blob/c9ee578a38d6866649072df18a3dbb36ff369747/types/flags.go
+	idBuf := make([]byte, 80)
+	for i, item := range l {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		idLen := hex.Encode(idBuf, item.ID)
+		b = append(b, []byte("'\\x")...)
+		b = append(b, idBuf[:idLen]...)
+		b = append(b, '\'')
+	}
+	return b, nil
+}
+
 func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) utils.Worker {
 	worker := utils.NewSimpleWorker(1)
+
+	rawNodesChunkSize := chunkSize
+	nodesChunkSize := chunkSize / 8
+	if nodesChunkSize == 0 {
+		nodesChunkSize = 1
+	}
 
 	go func() {
 		defer worker.Done()
 		ctx := context.Background()
+		nodes := make([]*Node, nodesChunkSize)
+		rawNodes := make([]*NodeAddr, rawNodesChunkSize)
 		for {
-			nodes := make([]*NodeAddr, chunkSize)
+			nodes := nodes[:0]
+			rawNodes := rawNodes[:0]
 			err := db.RunInTransaction(ctx, func(tx *pg.Tx) error {
-				_, err := tx.Query(&nodes, `
+				_, err := tx.Query(&rawNodes, `
 					SELECT host, port FROM raw_nodes
 					WHERE checked_at IS NULL
 					   OR (checked_at < now() - INTERVAL '5 hours'
 					       AND updated_at > now() - INTERVAL '7 days')
 					ORDER BY checked_at ASC NULLS FIRST
-					LIMIT ?`, chunkSize)
+					LIMIT ?
+					FOR NO KEY UPDATE`, chunkSize)
+				if utils.IsPGDeadlock(err) {
+					return nil
+				}
+				if err != nil {
+					return merry.Wrap(err)
+				}
+				if len(rawNodes) == 0 {
+					return nil
+				}
+				_, err = tx.Exec(`
+					UPDATE raw_nodes SET checked_at = NOW() WHERE (host,port) IN (?)`,
+					NodeAddrListAsPGTuple(rawNodes))
+				return merry.Wrap(err)
+			})
+			if err != nil {
+				worker.AddError(err)
+				return
+			}
+			err = db.RunInTransaction(ctx, func(tx *pg.Tx) error {
+				_, err := tx.Query(&nodes, `
+					SELECT id, host, port FROM nodes
+					WHERE checked_at IS NULL
+					   OR (checked_at < now() - INTERVAL '5 hours'
+					       AND updated_at > now() - INTERVAL '7 days')
+					ORDER BY checked_at ASC NULLS FIRST
+					LIMIT ?
+					FOR NO KEY UPDATE`, chunkSize)
+				if utils.IsPGDeadlock(err) {
+					return nil
+				}
 				if err != nil {
 					return merry.Wrap(err)
 				}
@@ -72,8 +129,8 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 					return nil
 				}
 				_, err = tx.Exec(`
-					UPDATE raw_nodes SET checked_at = NOW() WHERE (host,port) IN (?)`,
-					NodeAddrListAsPGTuple(nodes))
+					UPDATE nodes SET checked_at = NOW() WHERE id IN (?)`,
+					NodeListAsPGIDs(nodes))
 				return merry.Wrap(err)
 			})
 			if err != nil {
@@ -81,12 +138,15 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 				return
 			}
 
-			log.Printf("UPDATE: raw=%d", len(nodes))
-			if len(nodes) == 0 {
+			log.Printf("UPDATE: nodes=%d, raw=%d", len(nodes), len(rawNodes))
+			if len(nodes) == 0 && len(rawNodes) == 0 {
 				time.Sleep(10 * time.Second)
 			}
-			for _, node := range nodes {
+			for _, node := range rawNodes {
 				nodesChan <- node
+			}
+			for _, node := range nodes {
+				nodesChan <- &NodeAddr{Host: node.Host, Port: node.Port}
 			}
 		}
 	}()
@@ -176,22 +236,24 @@ func startNodesChecker(db *pg.DB, nodesInChan chan *NodeAddr, nodesOutChan chan 
 	go func() {
 		defer worker.Done()
 
-		fReq, err := os.OpenFile("update_nodes_request.fifo", os.O_WRONLY, 0)
-		if err != nil {
-			worker.AddError(err)
-			return
-		}
-		defer fReq.Close()
-
-		for node := range nodesInChan {
-			_, err := fmt.Fprintf(fReq, "C %s %d\n", node.Host, node.Port)
+		for {
+			fReq, err := os.OpenFile("update_nodes_request.fifo", os.O_WRONLY, 0)
 			if err != nil {
-				log.Printf("checker send error: %s", err)
-				break
+				worker.AddError(err)
+				return
 			}
-			if atomic.AddInt64(&countMsgOut, 1)%1000 == 0 {
-				log.Printf("UPDATE: msg out=%d, in=%d, out rpm=%.1f",
-					countMsgOut, countMsgIn, float64(countMsgOut)/float64(time.Now().Unix()-stamp)*60)
+			defer fReq.Close()
+
+			for node := range nodesInChan {
+				_, err := fmt.Fprintf(fReq, "C %s %d\n", node.Host, node.Port)
+				if err != nil {
+					log.Printf("checker send error: %s", err)
+					break
+				}
+				if atomic.AddInt64(&countMsgOut, 1)%1000 == 0 {
+					log.Printf("UPDATE: msg out=%d, in=%d, out rpm=%.1f",
+						countMsgOut, countMsgIn, float64(countMsgOut)/float64(time.Now().Unix()-stamp)*60)
+				}
 			}
 		}
 	}()

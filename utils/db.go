@@ -36,3 +36,10 @@ func SaveChunked(db *pg.DB, chunkSize int, channel chan interface{}, handler fun
 	}
 	return merry.Wrap(err)
 }
+
+func IsPGDeadlock(err error) bool {
+	if perr, ok := merry.Unwrap(err).(pg.Error); ok {
+		return perr.Field('C') == "40P01"
+	}
+	return false
+}

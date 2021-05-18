@@ -162,9 +162,7 @@ async def checking_worker(in_queue, out_queue):
         try:
             host, port = await in_queue.get()
             id_hs_peers = await try_get_info_from(host, port)
-            if id_hs_peers is None:
-                await out_queue.put('fail')
-            else:
+            if id_hs_peers is not None:
                 peer_id, hs, peers = id_hs_peers
                 await out_queue.put((peer_id, host, port, hs))
                 await out_queue.put((peers,))
@@ -177,10 +175,7 @@ async def sending_worker(queue):
     while True:
         try:
             item = await queue.get()
-            if item == 'fail':
-                send(f'F {packet_num}')
-                packet_num += 1
-            elif len(item) == 4:
+            if len(item) == 4:
                 node_id, host, port, handshake = item
                 node_type_name = NodeType(handshake.node_type).name
                 send(f'H {packet_num} {node_id} {host} {port} {handshake.protocol_version} {handshake.software_version} {node_type_name}')
@@ -229,7 +224,6 @@ async def main():
                 break
             msg = chunk[pos:end_pos].decode()
             pos = end_pos + 1
-            print(msg)
             if msg[0] == 'C':
                 try:
                     _, host, port = msg.split(' ')
