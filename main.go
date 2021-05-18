@@ -40,6 +40,7 @@ var commands = map[string]func() error{
 	"listen-nodes":  nodes.CMDListenNodes,
 	"update-nodes":  nodes.CMDUpdateNodes,
 	"import-nodes":  nodes.CMDImportNodes,
+	"save-stats":    nodes.CMDSaveStats,
 	"estimate-size": CMDEstimateSize,
 }
 

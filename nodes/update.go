@@ -282,58 +282,6 @@ func startNodesChecker(db *pg.DB, nodesInChan chan *NodeAddr, nodesOutChan chan 
 			}
 		}
 	}()
-
-	// go func() {
-	// 	defer worker.Done()
-
-	// 	ln, err := net.Listen("tcp", "127.0.0.1:18445")
-	// 	if err != nil {
-	// 		worker.AddError(err)
-	// 		return
-	// 	}
-	// 	for {
-	// 		conn, err := ln.Accept()
-	// 		if err != nil {
-	// 			log.Printf("accept error: %s", err)
-	// 			continue
-	// 		}
-
-	// 		go func() {
-	// 			buf := bufio.NewReader(conn)
-	// 			defer conn.Close()
-	// 			for {
-	// 				msg, err := buf.ReadString('\n')
-	// 				if err == io.EOF {
-	// 					break
-	// 				}
-	// 				if err != nil {
-	// 					log.Printf("checker recv error: %s", err)
-	// 					break
-	// 				}
-	// 				if strings.HasSuffix(msg, "\n") {
-	// 					msg = msg[:len(msg)-1]
-	// 				}
-	// 				if err := handleMessage(msg); err != nil {
-	// 					log.Println(merry.Details(err))
-	// 				}
-	// 				atomic.AddInt64(&countMsgIn, 1)
-	// 			}
-	// 		}()
-
-	// 		for node := range nodesInChan {
-	// 			_, err := fmt.Fprintf(conn, "C %s %d\n", node.Host, node.Port)
-	// 			if err != nil {
-	// 				log.Printf("checker send error: %s", err)
-	// 				break
-	// 			}
-	// 			if atomic.AddInt64(&countMsgOut, 1)%1000 == 0 || countMsgIn%100 == 0 {
-	// 				log.Printf("UPDATE: msg out=%d, in=%d, out rpm=%.1f",
-	// 					countMsgOut, countMsgIn, float64(countMsgOut)/float64(time.Now().Unix()-stamp)*60)
-	// 			}
-	// 		}
-	// 		conn.Close()
-	// 	}
-	// }()
 	return worker
 }
 
