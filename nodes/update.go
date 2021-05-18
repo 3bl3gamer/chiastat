@@ -7,20 +7,23 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/abh/geoip"
 	"github.com/ansel1/merry"
 	"github.com/go-pg/pg/v10"
 	"github.com/go-pg/pg/v10/types"
 )
 
 type NodeAddr struct {
-	Host string
-	Port int64
+	Host    string
+	Port    int64
+	Country *string
 }
 
 type Node struct {
@@ -30,6 +33,7 @@ type Node struct {
 	ProtocolVersion string
 	SoftwareVersion string
 	NodeType        string
+	Country         *string
 }
 
 type NodeAddrListAsPGTuple []*NodeAddr
@@ -162,7 +166,7 @@ func startNodesChecker(db *pg.DB, nodesInChan chan *NodeAddr, nodesOutChan chan 
 		if err != nil {
 			return merry.Wrap(err)
 		}
-		if inPacketNum == -1 && packetNum != inPacketNum+1 {
+		if inPacketNum != -1 && packetNum != inPacketNum+1 {
 			log.Printf("UPDATE: WARN: expected packet num %d, got %d (%d)",
 				inPacketNum+1, packetNum, packetNum-(inPacketNum+1))
 		}
@@ -285,6 +289,68 @@ func startNodesChecker(db *pg.DB, nodesInChan chan *NodeAddr, nodesOutChan chan 
 	return worker
 }
 
+func tryGetCountry(gdb, gdb6 *geoip.GeoIP, host string, tryResolve bool) *string {
+	hostIP := net.ParseIP(host)
+	if hostIP == nil {
+		if tryResolve {
+			addrs, _ := net.LookupHost(host)
+			ipFound := false
+			for _, addr := range addrs {
+				hostIP = net.ParseIP(addr)
+				if hostIP != nil {
+					host = addr
+					ipFound = true
+					break
+				}
+			}
+			if !ipFound {
+				return nil
+			}
+		} else {
+			return nil
+		}
+	}
+	if len(hostIP) == net.IPv4len {
+		if code, _ := gdb.GetCountry(host); code != "" {
+			return &code
+		}
+	}
+	if len(hostIP) == net.IPv6len {
+		if code, _ := gdb6.GetCountry_v6(host); code != "" {
+			return &code
+		}
+	}
+	return nil
+}
+
+func startNodesLocationChecker(gdb, gdb6 *geoip.GeoIP, nodesIn, nodesOut chan *Node, rawNodesIn, rawNodesOut chan *NodeAddr, numWorkers int) utils.Worker {
+	worker := utils.NewSimpleWorker(2 * numWorkers)
+
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			defer worker.Done()
+			for node := range nodesIn {
+				node.Country = tryGetCountry(gdb, gdb6, node.Host, true)
+				nodesOut <- node
+			}
+			close(nodesOut)
+		}()
+	}
+
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			defer worker.Done()
+			for node := range rawNodesIn {
+				node.Country = tryGetCountry(gdb, gdb6, node.Host, false)
+				rawNodesOut <- node
+			}
+			close(rawNodesOut)
+		}()
+	}
+
+	return worker
+}
+
 func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worker {
 	worker := utils.NewSimpleWorker(1)
 	nodesChanI := make(chan interface{}, 16)
@@ -302,16 +368,17 @@ func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worke
 			for _, nodeI := range items {
 				node := nodeI.(*Node)
 				_, err := tx.Exec(`
-					INSERT INTO nodes (id, host, port, protocol_version, software_version, node_type, updated_at)
-					VALUES (?, ?, ?, ?, ?, ?, now())
+					INSERT INTO nodes (id, host, port, protocol_version, software_version, node_type, country, updated_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, now())
 					ON CONFLICT (id) DO UPDATE SET
 						host = EXCLUDED.host,
 						port = EXCLUDED.port,
 						protocol_version = EXCLUDED.protocol_version,
 						software_version = EXCLUDED.software_version,
 						node_type = EXCLUDED.node_type,
+						country = EXCLUDED.country,
 						updated_at = now()`,
-					node.ID, node.Host, node.Port, node.ProtocolVersion, node.SoftwareVersion, node.NodeType,
+					node.ID, node.Host, node.Port, node.ProtocolVersion, node.SoftwareVersion, node.NodeType, node.Country,
 				)
 				if err != nil {
 					return merry.Wrap(err)
@@ -344,10 +411,11 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 			for _, nodeI := range items {
 				node := nodeI.(*NodeAddr)
 				_, err := tx.Exec(`
-					INSERT INTO raw_nodes (host, port, updated_at) VALUES (?, ?, now())
+					INSERT INTO raw_nodes (host, port, country, updated_at) VALUES (?, ?, ?, now())
 					ON CONFLICT (host, port) DO UPDATE SET
+						country = EXCLUDED.country,
 						updated_at = now()`,
-					node.Host, node.Port,
+					node.Host, node.Port, node.Country,
 				)
 				if err != nil {
 					return merry.Wrap(err)
@@ -365,16 +433,31 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 
 func CMDUpdateNodes() error {
 	db := utils.MakePGConnection()
-	nodesInChan := make(chan *NodeAddr, 16)
-	nodesOutChan := make(chan *Node, 16)
-	rawNodesOutChan := make(chan *NodeAddr, 16)
+	gdb, gdb6, err := utils.MakeGeoIPConnection()
+	if err != nil {
+		return merry.Wrap(err)
+	}
+
+	nodeAddrs := make(chan *NodeAddr, 16)
+	nodesNoLoc := make(chan *Node, 16)
+	rawNodesNoLoc := make(chan *NodeAddr, 16)
+	nodesOut := make(chan *Node, 16)
+	rawNodesOut := make(chan *NodeAddr, 16)
 
 	workers := []utils.Worker{
-		startOldNodesLoader(db, nodesInChan, 512),
-		startNodesChecker(db, nodesInChan, nodesOutChan, rawNodesOutChan),
-		startNodesSaver(db, nodesOutChan, 32),
-		startRawNodesSaver(db, rawNodesOutChan, 512),
+		startOldNodesLoader(db, nodeAddrs, 512),
+		startNodesChecker(db, nodeAddrs, nodesNoLoc, rawNodesNoLoc),
+		startNodesLocationChecker(gdb, gdb6, nodesNoLoc, nodesOut, rawNodesNoLoc, rawNodesOut, 32),
+		startNodesSaver(db, nodesOut, 32),
+		startRawNodesSaver(db, rawNodesOut, 512),
 	}
+	go func() {
+		for {
+			log.Printf("UPDATE: chans: %d -> (%d, %d) -> (%d, %d)",
+				len(nodeAddrs), len(nodesNoLoc), len(rawNodesNoLoc), len(nodesOut), len(rawNodesOut))
+			time.Sleep(10 * time.Second)
+		}
+	}()
 	for {
 		for _, worker := range workers {
 			if err := worker.PopError(); err != nil {
