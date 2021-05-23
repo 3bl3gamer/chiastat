@@ -6,6 +6,8 @@ import urllib.request
 from textwrap import dedent
 
 
+workdir = os.path.dirname(os.path.realpath(__file__))
+
 def cap_first(string):
     return string[0].upper() + string[1:]
 
@@ -152,11 +154,11 @@ for url in source_urls:
     text = urllib.request.urlopen(url).read().decode('utf-8')
     modules.append((text.split('\n'), ast.parse(text)))
 
-out_fname = 'chia_structs_generated.go'
+out_fname = workdir + '/structs_generated.go'
 
 with open(out_fname, 'w') as f:
     imports = ["math/big"]  # "github.com/ansel1/merry" "encoding/binary"
-    f.write('package main\n\n')
+    f.write('package chia\n\n')
     f.write('import (\n' + '\n'.join(f'"{x}"' for x in imports) + '\n)\n\n')
     f.write('\n\n'.join([
         make_struct_def(modules, 'BlockRecord'),

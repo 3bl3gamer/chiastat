@@ -1,4 +1,4 @@
-package main
+package chia
 
 import (
 	"math/big"
