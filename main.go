@@ -1,9 +1,9 @@
 package main
 
 import (
+	"chiastat/chia"
 	"chiastat/nodes"
 	"chiastat/utils"
-	"database/sql"
 	"flag"
 	"fmt"
 	"math/big"
@@ -18,21 +18,33 @@ func CMDEstimateSize() error {
 	dbPath := flag.String("db-path", utils.HomeDirOrEmpty("/.chia/mainnet/db/")+"blockchain_v1_mainnet.sqlite", "path to blockchain_v1_mainnet.sqlite")
 	flag.Parse()
 
-	if _, err := os.Stat(*dbPath); os.IsNotExist(err) {
-		return merry.Errorf("not found: %s", *dbPath)
-	}
-
-	db, err := sql.Open("sqlite3", *dbPath)
+	db, err := utils.OpenExistingSqlite3(*dbPath)
 	if err != nil {
 		return merry.Wrap(err)
 	}
 	defer db.Close()
 
-	spaceEstimate, err := EstimateNetworkSpace(db, 280000, 4608)
+	spaceEstimate, err := chia.EstimateNetworkSpaceFromDB(db, -1, 4608)
 	if err != nil {
 		return merry.Wrap(err)
 	}
 	fmt.Printf("%dB %dPiB\n", spaceEstimate, (&big.Int{}).Div(spaceEstimate, big.NewInt(1024*1024*1024*1024*1024)))
+	return nil
+}
+
+func CMDSizeChart() error {
+	dbPath := flag.String("db-path", utils.HomeDirOrEmpty("/.chia/mainnet/db/")+"blockchain_v1_mainnet.sqlite", "path to blockchain_v1_mainnet.sqlite")
+	flag.Parse()
+
+	db, err := utils.OpenExistingSqlite3(*dbPath)
+	if err != nil {
+		return merry.Wrap(err)
+	}
+	defer db.Close()
+
+	if err := chia.PrintNetworkSpaceChartFromDB(db); err != nil {
+		return merry.Wrap(err)
+	}
 	return nil
 }
 
@@ -42,6 +54,7 @@ var commands = map[string]func() error{
 	"import-nodes":  nodes.CMDImportNodes,
 	"save-stats":    nodes.CMDSaveStats,
 	"estimate-size": CMDEstimateSize,
+	"size-chart":    CMDSizeChart,
 }
 
 func printUsage() {

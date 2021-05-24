@@ -2,7 +2,9 @@ package utils
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"os"
 
 	"github.com/abh/geoip"
 	"github.com/ansel1/merry"
@@ -57,4 +59,16 @@ func IsPGDeadlock(err error) bool {
 		return perr.Field('C') == "40P01"
 	}
 	return false
+}
+
+func OpenExistingSqlite3(dbPath string) (*sql.DB, error) {
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil, merry.Errorf("not found: %s", dbPath)
+	}
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return nil, merry.Wrap(err)
+	}
+	return db, nil
 }
