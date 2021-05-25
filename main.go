@@ -48,6 +48,35 @@ func CMDSizeChart() error {
 	return nil
 }
 
+func CMDExportBlocks() error {
+	dbPath := flag.String("db-path", utils.HomeDirOrEmpty("/.chia/mainnet/db/")+"blockchain_v1_mainnet.sqlite", "path to blockchain_v1_mainnet.sqlite")
+	tableName := flag.String("table", "full_blocks", `table name, "full_blocks" or "block_records"`)
+	fname := flag.String("fname", "", "out file name (<table>.raw by default)")
+	flag.Parse()
+
+	if *fname == "" {
+		*fname = *tableName + ".raw"
+	}
+
+	db, err := utils.OpenExistingSqlite3(*dbPath)
+	if err != nil {
+		return merry.Wrap(err)
+	}
+	defer db.Close()
+
+	f, err := os.Create(*fname)
+	if err != nil {
+		return merry.Wrap(err)
+	}
+	defer f.Close()
+
+	if err := chia.ExportBlocksData(db, *tableName, f); err != nil {
+		return merry.Wrap(err)
+	}
+
+	return merry.Wrap(f.Close())
+}
+
 var commands = map[string]func() error{
 	"listen-nodes":  nodes.CMDListenNodes,
 	"update-nodes":  nodes.CMDUpdateNodes,
@@ -55,6 +84,7 @@ var commands = map[string]func() error{
 	"save-stats":    nodes.CMDSaveStats,
 	"estimate-size": CMDEstimateSize,
 	"size-chart":    CMDSizeChart,
+	"export-blocks": CMDExportBlocks,
 }
 
 func printUsage() {

@@ -1,3 +1,4 @@
 /chiastat
 /__pycache__
 /*.sqlite
+/*.raw

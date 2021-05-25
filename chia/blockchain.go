@@ -2,7 +2,10 @@ package chia
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"fmt"
+	"io"
+	"log"
 	"math/big"
 	"strings"
 	"time"
@@ -254,6 +257,64 @@ func PrintNetworkSpaceChartFromDB(db *sql.DB) error {
 	err = rows.Err()
 	if err != nil {
 		return merry.Wrap(err)
+	}
+
+	return nil
+}
+
+func ExportBlocksData(db *sql.DB, tableName string, out io.Writer) error {
+	chunkSize := 10000
+	lastHeight := -1
+	countTotal := 0
+	sizeTotal := 0
+	sizeMax := 0
+	blockSizeBuf := []byte{0, 0, 0, 0}
+
+	for {
+		rows, err := db.Query("SELECT height, block FROM "+tableName+" WHERE height > ? ORDER BY height LIMIT ?",
+			lastHeight, chunkSize)
+		if err != nil {
+			return merry.Wrap(err)
+		}
+		defer rows.Close()
+
+		count := 0
+		for rows.Next() {
+			var height uint64
+			var blockBytes []byte
+			err := rows.Scan(&height, &blockBytes)
+			if err != nil {
+				return merry.Wrap(err)
+			}
+
+			binary.BigEndian.PutUint32(blockSizeBuf, uint32(len(blockBytes)))
+			if _, err := out.Write(blockSizeBuf); err != nil {
+				return merry.Wrap(err)
+			}
+			if _, err := out.Write(blockBytes); err != nil {
+				return merry.Wrap(err)
+			}
+
+			lastHeight = int(height)
+			count += 1
+			countTotal += 1
+			sizeTotal += len(blockBytes)
+			if len(blockBytes) > sizeMax {
+				sizeMax = len(blockBytes)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return merry.Wrap(err)
+		}
+
+		if count < chunkSize {
+			break
+		}
+		if countTotal%(chunkSize*2) == 0 {
+			log.Printf("%d blocks, %.1f MiB, %.2f KiB/block (max %.1f KiB)",
+				countTotal, float64(sizeTotal)/(1024*1024),
+				float64(sizeTotal)/float64(countTotal)/1024, float64(sizeMax)/1024)
+		}
 	}
 
 	return nil
