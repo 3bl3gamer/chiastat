@@ -6,9 +6,12 @@ import urllib.request
 from textwrap import dedent
 
 
+DEBUG = False
 workdir = os.path.dirname(os.path.realpath(__file__))
 
 def cap_first(string):
+    if len(string) == 0:
+        return string
     return string[0].upper() + string[1:]
 
 def to_camel_case(string):
@@ -49,13 +52,15 @@ def make_type_def(ann_items):
             return '[32]byte'
         if t == 'bytes100':
             return '[100]byte'
+        if t == 'bytes':
+            return '[]byte'
         if t == 'List':
             return '[]'
         if t == 'Optional':
             return ''
         if is_class_type_name(t):
             return t
-        raise ValueError(f'unexpected type {t}')
+        raise ValueError(f'unexpected type {t} in {ann_items}')
     return get_next_def() + make_type_def(ann_items[1:])
 
 build_in_parse_funcs = {
@@ -66,6 +71,7 @@ build_in_parse_funcs = {
     'Uint128FromBytes',
     'Bytes32FromBytes',
     'Bytes100FromBytes',
+    'BytesFromBytes',
 }
 
 def make_type_parse(name, ann_items, need_err_check=False):
@@ -84,11 +90,12 @@ def make_type_parse(name, ann_items, need_err_check=False):
         inner_type_def = make_type_def(ann_items[1:])
         len_name = 'len_' + name.replace('.', '_')
         res += f'{len_name} := Uint32FromBytes(buf)\n'
-        # res += f'fmt.Println("len", {len_name})\n'
+        if DEBUG:
+            res += f'fmt.Println("len", {len_name})\n'
         res += f'{name} = make([]{inner_type_def}, {len_name})\n'
         res += f'for i:=uint32(0);i<{len_name};i++ {{ {make_type_parse(f"{name}[i]", ann_items[1:], need_err_check=True)} }}\n'
-    # res += f'if err != nil {{ return }}\n'
-    # res += f'fmt.Println("{name}", "{make_type_def(ann_items)}", {name}, buf.pos, buf.err)\n'
+    if DEBUG:
+        res += f'fmt.Println("{name}", "{make_type_def(ann_items)}", {name}, buf.pos, buf.err)\n'
     if need_err_check:
         res += f'if buf.err != nil {{ return }}\n'
     return res
@@ -143,13 +150,18 @@ source_urls = [
     'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/blockchain_format/coin.py',
     'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/blockchain_format/classgroup.py',
     'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/blockchain_format/sub_epoch_summary.py',
+    'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/blockchain_format/vdf.py',
+    'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/blockchain_format/foliage.py',
+    'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/blockchain_format/reward_chain_block.py',
+    'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/blockchain_format/program.py',
+    'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/blockchain_format/slots.py',
+    'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/blockchain_format/pool_target.py',
+    'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/blockchain_format/proof_of_space.py',
+    'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/full_block.py',
+    'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/types/end_of_slot_bundle.py',
 ]
 
 modules = []
-# for fname in ['block_record.py', 'coin.py', 'classgroup.py', 'sub_epoch_summary.py']:
-#     with open(fname) as f:
-#         text = f.read()
-#         modules.append((text.split('\n'), ast.parse(text)))
 for url in source_urls:
     text = urllib.request.urlopen(url).read().decode('utf-8')
     modules.append((text.split('\n'), ast.parse(text)))
@@ -157,14 +169,22 @@ for url in source_urls:
 out_fname = workdir + '/structs_generated.go'
 
 with open(out_fname, 'w') as f:
-    imports = ["math/big"]  # "github.com/ansel1/merry" "encoding/binary"
+    imports = ["math/big"]
+    if DEBUG:
+        imports.append("fmt")
     f.write('package chia\n\n')
     f.write('import (\n' + '\n'.join(f'"{x}"' for x in imports) + '\n)\n\n')
-    f.write('\n\n'.join([
-        make_struct_def(modules, 'BlockRecord'),
-        make_struct_def(modules, 'Coin'),
-        make_struct_def(modules, 'ClassgroupElement'),
-        make_struct_def(modules, 'SubEpochSummary'),
+    f.write('\n\n'.join(make_struct_def(modules, name) for name in [
+        'BlockRecord', 'Coin', 'ClassgroupElement', 'SubEpochSummary',
+        'FullBlock', 'EndOfSubSlotBundle', 'VDFProof', 'VDFInfo',
+        'Foliage', 'FoliageTransactionBlock', 'FoliageBlockData', 'TransactionsInfo', 'RewardChainBlock',
+        'ChallengeChainSubSlot', 'InfusedChallengeChainSubSlot', 'RewardChainSubSlot', 'SubSlotProofs',
+        'PoolTarget', 'ProofOfSpace'
     ]))
+    for dummy_name, dummy_size in [('G1Element', 48), ('G2Element', 96)]:
+        f.write(f'\n\ntype {dummy_name} struct {{Bytes []byte}}')
+        f.write(f'\nfunc {dummy_name}FromBytes(buf *ParseBuf) (obj {dummy_name}) {{')
+        f.write(f'\nobj.Bytes = BytesNFromBytes(buf, {dummy_size}); return')
+        f.write(f'\n}}')
 
 os.system('go fmt ' + out_fname)

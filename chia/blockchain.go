@@ -32,6 +32,7 @@ func BlockRecordFromRow(rows Scanner) (*BlockRecord, error) {
 	// fmt.Println(block)
 	buf := NewParseBuf(block)
 	br := BlockRecordFromBytes(buf)
+	buf.ensureEmpty()
 	if buf.err != nil {
 		return nil, buf.err
 	}
@@ -45,10 +46,29 @@ func BlockRecordByHeight(db *sql.DB, height int64) (*BlockRecord, error) {
 	return BlockRecordFromRow(row)
 }
 
-func EstimateNetworkSpace(br0, br1 *BlockRecord) *big.Int {
+func FullBlockFromRow(row Scanner) (*FullBlock, error) {
+	var blockBytes []byte
+	if err := row.Scan(&blockBytes); err != nil {
+		return nil, merry.Wrap(err)
+	}
+	buf := NewParseBuf(blockBytes)
+	block := FullBlockFromBytes(buf)
+	buf.ensureEmpty()
+	if buf.err != nil {
+		return nil, merry.Wrap(buf.err)
+	}
+	return &block, nil
+}
+
+func FullBlockByHeight(db *sql.DB, height int64) (*FullBlock, error) {
+	row := db.QueryRow("SELECT block FROM full_blocks WHERE height = ?", height)
+	return FullBlockFromRow(row)
+}
+
+func estimateNetworkSpaceInner(weight0, weight1 *big.Int, totalIters0, totalIters1 *big.Int) *big.Int {
 	// https://github.com/Chia-Network/chia-blockchain/blob/latest/chia/rpc/full_node_rpc_api.py#L276
-	deltaWeight := (&big.Int{}).Sub(br1.Weight, br0.Weight)
-	deltaIters := (&big.Int{}).Sub(br1.TotalIters, br0.TotalIters)
+	deltaWeight := (&big.Int{}).Sub(weight1, weight0)
+	deltaIters := (&big.Int{}).Sub(totalIters1, totalIters0)
 	additionalDifficultyConstant := (&big.Int{}).Exp(big.NewInt(2), big.NewInt(67), nil)
 	eligiblePlotsFilterMultiplier := (&big.Int{}).Exp(big.NewInt(2), big.NewInt(9), nil)
 	UI_ACTUAL_SPACE_CONSTANT_FACTOR := 0.762
@@ -60,6 +80,14 @@ func EstimateNetworkSpace(br0, br1 *BlockRecord) *big.Int {
 	spaceEstimate.Mul(spaceEstimate, big.NewInt(int64(UI_ACTUAL_SPACE_CONSTANT_FACTOR*1000000)))
 	spaceEstimate.Div(spaceEstimate, big.NewInt(1000000))
 	return spaceEstimate
+}
+func EstimateNetworkSpace(br0, br1 *BlockRecord) *big.Int {
+	return estimateNetworkSpaceInner(br0.Weight, br1.Weight, br0.TotalIters, br1.TotalIters)
+}
+func EstimateNetworkSpaceFull(fb0, fb1 *FullBlock) *big.Int {
+	rcb0 := &fb0.RewardChainBlock
+	rcb1 := &fb1.RewardChainBlock
+	return estimateNetworkSpaceInner(rcb0.Weight, rcb1.Weight, rcb0.TotalIters, rcb1.TotalIters)
 }
 
 func EstimateNetworkSpaceFromDB(db *sql.DB, lastHeight, pastOffset int64) (*big.Int, error) {
@@ -85,6 +113,13 @@ func EstimateNetworkSpaceFromDB(db *sql.DB, lastHeight, pastOffset int64) (*big.
 	}
 	// fmt.Println(br0.Timestamp, time.Unix(int64(br0.Timestamp), 0))
 	// fmt.Println(br1.Timestamp, time.Unix(int64(br1.Timestamp), 0))
+
+	// fb, err := FullBlockByHeight(db, firstHeight)
+	// if err != nil {
+	// 	fmt.Println(firstHeight)
+	// 	return nil, merry.Wrap(err)
+	// }
+	// fmt.Printf("%d %d %#v\n", firstHeight, fb.RewardChainBlock.Height, fb.TransactionsGeneratorRefList)
 
 	return EstimateNetworkSpace(br0, br1), nil
 }
@@ -130,6 +165,7 @@ type StampedRecord struct {
 
 func PrintNetworkSpaceChartFromDB(db *sql.DB) error {
 	rows, err := db.Query("SELECT " + BlockRecordSelectCols + " FROM block_records ORDER BY height")
+	// rows, err := db.Query("SELECT block FROM full_blocks ORDER BY height")
 	if err != nil {
 		return merry.Wrap(err)
 	}
