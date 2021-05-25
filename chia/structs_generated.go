@@ -20,7 +20,7 @@ type BlockRecord struct {
 	// This is the intermediary VDF output at ip_iters in challenge chain
 	ChallengeVdfOutput ClassgroupElement
 	// (optional) This is the intermediary VDF output at ip_iters in infused cc, iff deficit <= 3
-	InfusedChallengeVdfOutput ClassgroupElement
+	InfusedChallengeVdfOutput *ClassgroupElement
 	// The reward chain infusion output, input to next VDF
 	RewardInfusionNewChallenge [32]byte
 	// Hash of challenge chain data, used to validate end of slots in the future
@@ -51,7 +51,7 @@ type BlockRecord struct {
 	// (optional)
 	FinishedRewardSlotHashes [][32]byte
 	// (optional)
-	SubEpochSummaryIncluded SubEpochSummary
+	SubEpochSummaryIncluded *SubEpochSummary
 }
 
 func BlockRecordFromBytes(buf *ParseBuf) (obj BlockRecord) {
@@ -63,7 +63,8 @@ func BlockRecordFromBytes(buf *ParseBuf) (obj BlockRecord) {
 	obj.SignagePointIndex = Uint8FromBytes(buf)
 	obj.ChallengeVdfOutput = ClassgroupElementFromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.InfusedChallengeVdfOutput = ClassgroupElementFromBytes(buf)
+		var t = ClassgroupElementFromBytes(buf)
+		obj.InfusedChallengeVdfOutput = &t
 	}
 	obj.RewardInfusionNewChallenge = Bytes32FromBytes(buf)
 	obj.ChallengeBlockInfoHash = Bytes32FromBytes(buf)
@@ -124,7 +125,8 @@ func BlockRecordFromBytes(buf *ParseBuf) (obj BlockRecord) {
 		}
 	}
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.SubEpochSummaryIncluded = SubEpochSummaryFromBytes(buf)
+		var t = SubEpochSummaryFromBytes(buf)
+		obj.SubEpochSummaryIncluded = &t
 	}
 	return
 }
@@ -186,21 +188,21 @@ type FullBlock struct {
 	// Reward chain trunk data
 	RewardChainBlock RewardChainBlock
 	// (optional) If not first sp in sub-slot
-	ChallengeChainSpProof VDFProof
+	ChallengeChainSpProof *VDFProof
 	ChallengeChainIpProof VDFProof
 	// (optional) If not first sp in sub-slot
-	RewardChainSpProof VDFProof
+	RewardChainSpProof *VDFProof
 	RewardChainIpProof VDFProof
 	// (optional) Iff deficit < 4
-	InfusedChallengeChainIpProof VDFProof
+	InfusedChallengeChainIpProof *VDFProof
 	// Reward chain foliage data
 	Foliage Foliage
 	// (optional) Reward chain foliage data (tx block)
-	FoliageTransactionBlock FoliageTransactionBlock
+	FoliageTransactionBlock *FoliageTransactionBlock
 	// (optional) Reward chain foliage data (tx block additional)
-	TransactionsInfo TransactionsInfo
+	TransactionsInfo *TransactionsInfo
 	// (optional) Program that generates transactions
-	TransactionsGenerator SerializedProgram
+	TransactionsGenerator *SerializedProgram
 	// List of block heights of previous generators referenced in this block
 	TransactionsGeneratorRefList []uint32
 }
@@ -216,25 +218,31 @@ func FullBlockFromBytes(buf *ParseBuf) (obj FullBlock) {
 	}
 	obj.RewardChainBlock = RewardChainBlockFromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.ChallengeChainSpProof = VDFProofFromBytes(buf)
+		var t = VDFProofFromBytes(buf)
+		obj.ChallengeChainSpProof = &t
 	}
 	obj.ChallengeChainIpProof = VDFProofFromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.RewardChainSpProof = VDFProofFromBytes(buf)
+		var t = VDFProofFromBytes(buf)
+		obj.RewardChainSpProof = &t
 	}
 	obj.RewardChainIpProof = VDFProofFromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.InfusedChallengeChainIpProof = VDFProofFromBytes(buf)
+		var t = VDFProofFromBytes(buf)
+		obj.InfusedChallengeChainIpProof = &t
 	}
 	obj.Foliage = FoliageFromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.FoliageTransactionBlock = FoliageTransactionBlockFromBytes(buf)
+		var t = FoliageTransactionBlockFromBytes(buf)
+		obj.FoliageTransactionBlock = &t
 	}
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.TransactionsInfo = TransactionsInfoFromBytes(buf)
+		var t = TransactionsInfoFromBytes(buf)
+		obj.TransactionsInfo = &t
 	}
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.TransactionsGenerator = SerializedProgramFromBytes(buf)
+		var t = SerializedProgramFromBytes(buf)
+		obj.TransactionsGenerator = &t
 	}
 	len_obj_TransactionsGeneratorRefList := Uint32FromBytes(buf)
 	obj.TransactionsGeneratorRefList = make([]uint32, len_obj_TransactionsGeneratorRefList)
@@ -250,7 +258,7 @@ func FullBlockFromBytes(buf *ParseBuf) (obj FullBlock) {
 type EndOfSubSlotBundle struct {
 	ChallengeChain ChallengeChainSubSlot
 	// (optional)
-	InfusedChallengeChain InfusedChallengeChainSubSlot
+	InfusedChallengeChain *InfusedChallengeChainSubSlot
 	RewardChain           RewardChainSubSlot
 	Proofs                SubSlotProofs
 }
@@ -258,7 +266,8 @@ type EndOfSubSlotBundle struct {
 func EndOfSubSlotBundleFromBytes(buf *ParseBuf) (obj EndOfSubSlotBundle) {
 	obj.ChallengeChain = ChallengeChainSubSlotFromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.InfusedChallengeChain = InfusedChallengeChainSubSlotFromBytes(buf)
+		var t = InfusedChallengeChainSubSlotFromBytes(buf)
+		obj.InfusedChallengeChain = &t
 	}
 	obj.RewardChain = RewardChainSubSlotFromBytes(buf)
 	obj.Proofs = SubSlotProofsFromBytes(buf)
@@ -300,7 +309,7 @@ type Foliage struct {
 	// (optional)
 	FoliageTransactionBlockHash [32]byte
 	// (optional)
-	FoliageTransactionBlockSignature G2Element
+	FoliageTransactionBlockSignature *G2Element
 }
 
 func FoliageFromBytes(buf *ParseBuf) (obj Foliage) {
@@ -312,7 +321,8 @@ func FoliageFromBytes(buf *ParseBuf) (obj Foliage) {
 		obj.FoliageTransactionBlockHash = Bytes32FromBytes(buf)
 	}
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.FoliageTransactionBlockSignature = G2ElementFromBytes(buf)
+		var t = G2ElementFromBytes(buf)
+		obj.FoliageTransactionBlockSignature = &t
 	}
 	return
 }
@@ -340,7 +350,7 @@ type FoliageBlockData struct {
 	UnfinishedRewardBlockHash [32]byte
 	PoolTarget                PoolTarget
 	// (optional) Iff ProofOfSpace has a pool pk
-	PoolSignature          G2Element
+	PoolSignature          *G2Element
 	FarmerRewardPuzzleHash [32]byte
 	// Used for future updates. Can be any 32 byte value initially
 	ExtensionData [32]byte
@@ -350,7 +360,8 @@ func FoliageBlockDataFromBytes(buf *ParseBuf) (obj FoliageBlockData) {
 	obj.UnfinishedRewardBlockHash = Bytes32FromBytes(buf)
 	obj.PoolTarget = PoolTargetFromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.PoolSignature = G2ElementFromBytes(buf)
+		var t = G2ElementFromBytes(buf)
+		obj.PoolSignature = &t
 	}
 	obj.FarmerRewardPuzzleHash = Bytes32FromBytes(buf)
 	obj.ExtensionData = Bytes32FromBytes(buf)
@@ -396,15 +407,15 @@ type RewardChainBlock struct {
 	PosSsCcChallengeHash [32]byte
 	ProofOfSpace         ProofOfSpace
 	// (optional) Not present for first sp in slot
-	ChallengeChainSpVdf       VDFInfo
+	ChallengeChainSpVdf       *VDFInfo
 	ChallengeChainSpSignature G2Element
 	ChallengeChainIpVdf       VDFInfo
 	// (optional) Not present for first sp in slot
-	RewardChainSpVdf       VDFInfo
+	RewardChainSpVdf       *VDFInfo
 	RewardChainSpSignature G2Element
 	RewardChainIpVdf       VDFInfo
 	// (optional) Iff deficit < 16
-	InfusedChallengeChainIpVdf VDFInfo
+	InfusedChallengeChainIpVdf *VDFInfo
 	IsTransactionBlock         bool
 }
 
@@ -416,17 +427,20 @@ func RewardChainBlockFromBytes(buf *ParseBuf) (obj RewardChainBlock) {
 	obj.PosSsCcChallengeHash = Bytes32FromBytes(buf)
 	obj.ProofOfSpace = ProofOfSpaceFromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.ChallengeChainSpVdf = VDFInfoFromBytes(buf)
+		var t = VDFInfoFromBytes(buf)
+		obj.ChallengeChainSpVdf = &t
 	}
 	obj.ChallengeChainSpSignature = G2ElementFromBytes(buf)
 	obj.ChallengeChainIpVdf = VDFInfoFromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.RewardChainSpVdf = VDFInfoFromBytes(buf)
+		var t = VDFInfoFromBytes(buf)
+		obj.RewardChainSpVdf = &t
 	}
 	obj.RewardChainSpSignature = G2ElementFromBytes(buf)
 	obj.RewardChainIpVdf = VDFInfoFromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.InfusedChallengeChainIpVdf = VDFInfoFromBytes(buf)
+		var t = VDFInfoFromBytes(buf)
+		obj.InfusedChallengeChainIpVdf = &t
 	}
 	obj.IsTransactionBlock = BoolFromBytes(buf)
 	return
@@ -492,14 +506,15 @@ func RewardChainSubSlotFromBytes(buf *ParseBuf) (obj RewardChainSubSlot) {
 type SubSlotProofs struct {
 	ChallengeChainSlotProof VDFProof
 	// (optional)
-	InfusedChallengeChainSlotProof VDFProof
+	InfusedChallengeChainSlotProof *VDFProof
 	RewardChainSlotProof           VDFProof
 }
 
 func SubSlotProofsFromBytes(buf *ParseBuf) (obj SubSlotProofs) {
 	obj.ChallengeChainSlotProof = VDFProofFromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.InfusedChallengeChainSlotProof = VDFProofFromBytes(buf)
+		var t = VDFProofFromBytes(buf)
+		obj.InfusedChallengeChainSlotProof = &t
 	}
 	obj.RewardChainSlotProof = VDFProofFromBytes(buf)
 	return
@@ -520,7 +535,7 @@ func PoolTargetFromBytes(buf *ParseBuf) (obj PoolTarget) {
 type ProofOfSpace struct {
 	Challenge [32]byte
 	// (optional) Only one of these two should be present
-	PoolPublicKey G1Element
+	PoolPublicKey *G1Element
 	// (optional)
 	PoolContractPuzzleHash [32]byte
 	PlotPublicKey          G1Element
@@ -531,7 +546,8 @@ type ProofOfSpace struct {
 func ProofOfSpaceFromBytes(buf *ParseBuf) (obj ProofOfSpace) {
 	obj.Challenge = Bytes32FromBytes(buf)
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
-		obj.PoolPublicKey = G1ElementFromBytes(buf)
+		var t = G1ElementFromBytes(buf)
+		obj.PoolPublicKey = &t
 	}
 	if flag := BoolFromBytes(buf); buf.err == nil && flag {
 		obj.PoolContractPuzzleHash = Bytes32FromBytes(buf)

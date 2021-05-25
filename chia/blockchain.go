@@ -14,35 +14,23 @@ type Scanner interface {
 	Scan(dest ...interface{}) error
 }
 
-const BlockRecordSelectCols = "header_hash, prev_hash, height, block, sub_epoch_summary, is_peak, is_block"
-
 func BlockRecordFromRow(rows Scanner) (*BlockRecord, error) {
-	var headerHash string
-	var prevHash string
-	var height int64
-	var block []byte
-	var subEpochSummary []byte
-	var isPeak int8
-	var isBlock int8
-	err := rows.Scan(&headerHash, &prevHash, &height, &block, &subEpochSummary, &isPeak, &isBlock)
+	var blockBytes []byte
+	err := rows.Scan(&blockBytes)
 	if err != nil {
 		return nil, merry.Wrap(err)
 	}
-	// fmt.Println(headerHash, prevHash, height, isPeak, isBlock)
-	// fmt.Println(block)
-	buf := NewParseBuf(block)
+	buf := NewParseBuf(blockBytes)
 	br := BlockRecordFromBytes(buf)
 	buf.ensureEmpty()
 	if buf.err != nil {
 		return nil, buf.err
 	}
-	// fmt.Printf("%#v\n", br)
-	// fmt.Println(br.height, br.weight, br.totalIters)
 	return &br, nil
 }
 
 func BlockRecordByHeight(db *sql.DB, height int64) (*BlockRecord, error) {
-	row := db.QueryRow("SELECT "+BlockRecordSelectCols+" FROM block_records WHERE height = ?", height)
+	row := db.QueryRow("SELECT block FROM block_records WHERE height = ?", height)
 	return BlockRecordFromRow(row)
 }
 
@@ -164,7 +152,7 @@ type StampedRecord struct {
 }
 
 func PrintNetworkSpaceChartFromDB(db *sql.DB) error {
-	rows, err := db.Query("SELECT " + BlockRecordSelectCols + " FROM block_records ORDER BY height")
+	rows, err := db.Query("SELECT block FROM block_records ORDER BY height")
 	// rows, err := db.Query("SELECT block FROM full_blocks ORDER BY height")
 	if err != nil {
 		return merry.Wrap(err)

@@ -57,7 +57,7 @@ def make_type_def(ann_items):
         if t == 'List':
             return '[]'
         if t == 'Optional':
-            return ''
+            return '*' if is_class_type_name(ann_items[1]) else ''
         if is_class_type_name(t):
             return t
         raise ValueError(f'unexpected type {t} in {ann_items}')
@@ -84,7 +84,11 @@ def make_type_parse(name, ann_items, need_err_check=False):
     elif ann_items[0] == 'Optional':
         inner_type_def = make_type_def(ann_items[1:])
         res += f'if flag := BoolFromBytes(buf); buf.err == nil && flag {{ \n'
-        res += f'{make_type_parse(name, ann_items[1:])}'
+        if is_class_type_name(ann_items[1]):
+            res += f'{make_type_parse("var t", ann_items[1:])}'
+            res += f'{name} = &t\n'
+        else:
+            res += f'{make_type_parse(name, ann_items[1:])}'
         res += f'}}\n'
     elif ann_items[0] == 'List':
         inner_type_def = make_type_def(ann_items[1:])
