@@ -3,6 +3,7 @@ package chia
 import (
 	"database/sql"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -51,7 +52,7 @@ func FullBlockFromRow(row Scanner) (*FullBlock, error) {
 	return &block, nil
 }
 
-func FullBlockByHeight(db *sql.DB, height int64) (*FullBlock, error) {
+func FullBlockByHeight(db *sql.DB, height uint32) (*FullBlock, error) {
 	row := db.QueryRow("SELECT block FROM full_blocks WHERE height = ?", height)
 	return FullBlockFromRow(row)
 }
@@ -156,16 +157,10 @@ type StampedRecord struct {
 
 func PrintNetworkSpaceChartFromDB(db *sql.DB) error {
 	rows, err := db.Query("SELECT block FROM block_records ORDER BY height")
-	// rows, err := db.Query("SELECT block FROM full_blocks ORDER BY height")
 	if err != nil {
 		return merry.Wrap(err)
 	}
 	defer rows.Close()
-
-	// _, ph, err := DecodePuzzleHash("xch1f0ryxk6qn096hefcwrdwpuph2hm24w69jnzezhkfswk0z2jar7aq5zzpfj")
-	// if err != nil {
-	// 	return merry.Wrap(err)
-	// }
 
 	blocks := NewRingBuf(4608 + 1)
 	prevDay := int64(0)
@@ -259,6 +254,55 @@ func PrintNetworkSpaceChartFromDB(db *sql.DB) error {
 		return merry.Wrap(err)
 	}
 
+	return nil
+}
+
+func EvalFullBlockFromDB(db *sql.DB, height uint32) error {
+	// 225698 first with transaction generator
+	// 271489
+	block, err := FullBlockByHeight(db, height)
+	if err != nil {
+		return merry.Wrap(err)
+	}
+
+	if block.TransactionsGenerator == nil {
+		fmt.Printf("block %d has no transactions generator\n", height)
+	}
+	fmt.Println("ref list:", block.TransactionsGeneratorRefList)
+
+	refBlocks := make([]*FullBlock, len(block.TransactionsGeneratorRefList))
+	for i, refHeight := range block.TransactionsGeneratorRefList {
+		refBlocks[i], err = FullBlockByHeight(db, refHeight)
+		if err != nil {
+			return merry.Wrap(err)
+		}
+	}
+
+	var args CLVMPair = CLVMPair{ATOM_NULL, ATOM_NULL}
+	argsEnd := &args.Left
+	for _, block := range refBlocks {
+		pair := CLVMPair{CLVMAtom{block.TransactionsGenerator.Bytes}, ATOM_NULL}
+		b := [300]byte{}
+		pair = CLVMPair{CLVMAtom{b[:]}, ATOM_NULL}
+		*argsEnd = pair
+		argsEnd = &pair.Right
+	}
+	args = CLVMPair{block.TransactionsGenerator.Root, CLVMPair{args, ATOM_NULL}}
+	result := RunProgram(ROM_BOOTSTRAP_GENERATOR.Root, args)
+
+	fmt.Println("spent coins:")
+	res := result.(CLVMPair).Left
+	for !res.Nullp() {
+		cur := res.(CLVMPair).Left
+		spent_coin_parent_id := cur.(CLVMPair).Left.(CLVMAtom).Bytes                                  //bytes32
+		spent_coin_puzzle_hash := cur.(CLVMPair).Right.(CLVMPair).Left.(CLVMAtom).Bytes               //bytes32
+		spent_coin_amount := cur.(CLVMPair).Right.(CLVMPair).Right.(CLVMPair).Left.(CLVMAtom).AsInt() //uint64
+		// spent_coin: Coin = Coin(spent_coin_parent_id, spent_coin_puzzle_hash, spent_coin_amount)
+		fmt.Println(hex.EncodeToString(spent_coin_parent_id), hex.EncodeToString(spent_coin_puzzle_hash), spent_coin_amount)
+		res = res.(CLVMPair).Right
+	}
+
+	fmt.Println("done")
 	return nil
 }
 

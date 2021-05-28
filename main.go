@@ -77,6 +77,20 @@ func CMDExportBlocks() error {
 	return merry.Wrap(f.Close())
 }
 
+func CMDEvalBlock() error {
+	dbPath := flag.String("db-path", utils.HomeDirOrEmpty("/.chia/mainnet/db/")+"blockchain_v1_mainnet.sqlite", "path to blockchain_v1_mainnet.sqlite")
+	height := flag.Int("height", 225698, "block height (225698 is the first block with non-empty transaction generator, 225703 is the next one)")
+	flag.Parse()
+
+	db, err := utils.OpenExistingSqlite3(*dbPath)
+	if err != nil {
+		return merry.Wrap(err)
+	}
+	defer db.Close()
+
+	return merry.Wrap(chia.EvalFullBlockFromDB(db, uint32(*height)))
+}
+
 var commands = map[string]func() error{
 	"listen-nodes":  nodes.CMDListenNodes,
 	"update-nodes":  nodes.CMDUpdateNodes,
@@ -85,6 +99,7 @@ var commands = map[string]func() error{
 	"estimate-size": CMDEstimateSize,
 	"size-chart":    CMDSizeChart,
 	"export-blocks": CMDExportBlocks,
+	"eval-block":    CMDEvalBlock,
 }
 
 func printUsage() {
