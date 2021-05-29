@@ -190,7 +190,7 @@ func CLVMNextFromIRString(str string, pos int) (int, CLVMObject, error) {
 				stack = append(stack, CLVMAtom{[]byte(token[1 : len(token)-1])})
 			} else {
 				// symbol
-				if atom, ok := KEYWORD_TO_ATOM[token]; ok {
+				if atom, ok := ATOM_FROM_OP_KEYWORD[token]; ok {
 					stack = append(stack, atom)
 				} else {
 					stack = append(stack, CLVMAtom{[]byte(token)})

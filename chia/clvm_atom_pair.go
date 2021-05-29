@@ -94,11 +94,8 @@ func (a CLVMAtom) StringExt(keywords bool, hexValues bool, bracketNil bool, comp
 		}
 	}
 	if keywords && len(a.Bytes) == 1 {
-		if kw, ok := KEYWORD_FROM_ATOM_BYTE[a.Bytes[0]]; ok {
-			if rw, ok := OP_REWRITE[kw]; ok {
-				kw = rw
-			}
-			return kw
+		if op := OP_FROM_BYTE[a.Bytes[0]]; op.keyword != "" {
+			return op.keyword
 		}
 	}
 	if hexValues {
