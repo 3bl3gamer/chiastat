@@ -1,6 +1,7 @@
 package chia
 
 import (
+	"bytes"
 	"encoding/hex"
 	"log"
 	"math/big"
@@ -42,6 +43,9 @@ func (a CLVMAtom) AsInt() *big.Int {
 	} else {
 		return new(big.Int).SetBytes(a.Bytes)
 	}
+}
+func (a CLVMAtom) Equal(other CLVMAtom) bool {
+	return bytes.Equal(a.Bytes, other.Bytes)
 }
 func CLVMAtomFromInt(v *big.Int) CLVMAtom {
 	if v.Sign() == 0 {
@@ -90,7 +94,7 @@ func (a CLVMAtom) StringExt(keywords bool, hexValues bool, bracketNil bool, comp
 		}
 	}
 	if keywords && len(a.Bytes) == 1 {
-		if kw, ok := KEYWORD_FROM_ATOM[a.Bytes[0]]; ok {
+		if kw, ok := KEYWORD_FROM_ATOM_BYTE[a.Bytes[0]]; ok {
 			if rw, ok := OP_REWRITE[kw]; ok {
 				kw = rw
 			}
@@ -121,8 +125,8 @@ func (a CLVMAtom) String() string {
 }
 
 type CLVMPair struct {
-	Left  CLVMObject
-	Right CLVMObject
+	First CLVMObject
+	Rest  CLVMObject
 }
 
 func (a CLVMPair) Nullp() bool {
@@ -136,7 +140,7 @@ func (a CLVMPair) ListLen() int {
 	size := 0
 	for {
 		if pair, ok := item.(CLVMPair); ok {
-			item = pair.Right
+			item = pair.Rest
 		} else {
 			break
 		}
@@ -145,15 +149,15 @@ func (a CLVMPair) ListLen() int {
 	return size
 }
 func (a CLVMPair) StringExt(keywords bool, hexValues bool, bracketNil bool, compactLists bool) string {
-	leftStr := a.Left.StringExt(keywords, hexValues, bracketNil, compactLists)
+	leftStr := a.First.StringExt(keywords, hexValues, bracketNil, compactLists)
 	if compactLists {
 		res := "(" + leftStr
-		cur := a.Right
+		cur := a.Rest
 		for !cur.Nullp() {
 			if pair, ok := cur.(CLVMPair); ok {
-				_, isAtom := pair.Left.(CLVMAtom)
-				res += " " + pair.Left.StringExt(keywords && !isAtom, hexValues, bracketNil, compactLists)
-				cur = pair.Right
+				_, isAtom := pair.First.(CLVMAtom)
+				res += " " + pair.First.StringExt(keywords && !isAtom, hexValues, bracketNil, compactLists)
+				cur = pair.Rest
 			} else {
 				res += " . " + cur.StringExt(false, hexValues, bracketNil, compactLists)
 				break
@@ -161,8 +165,8 @@ func (a CLVMPair) StringExt(keywords bool, hexValues bool, bracketNil bool, comp
 		}
 		return res + ")"
 	}
-	_, rightIsAtom := a.Right.(CLVMAtom)
-	rightStr := a.Right.StringExt(keywords && !rightIsAtom, hexValues, bracketNil, compactLists)
+	_, rightIsAtom := a.Rest.(CLVMAtom)
+	rightStr := a.Rest.StringExt(keywords && !rightIsAtom, hexValues, bracketNil, compactLists)
 	return "(" + leftStr + " . " + rightStr + ")"
 }
 func (a CLVMPair) String() string {

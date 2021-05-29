@@ -267,6 +267,7 @@ func EvalFullBlockFromDB(db *sql.DB, height uint32) error {
 
 	if block.TransactionsGenerator == nil {
 		fmt.Printf("block %d has no transactions generator\n", height)
+		return nil
 	}
 	fmt.Println("ref list:", block.TransactionsGeneratorRefList)
 
@@ -279,27 +280,27 @@ func EvalFullBlockFromDB(db *sql.DB, height uint32) error {
 	}
 
 	var args CLVMPair = CLVMPair{ATOM_NULL, ATOM_NULL}
-	argsEnd := &args.Left
+	argsEnd := &args.First
 	for _, block := range refBlocks {
 		pair := CLVMPair{CLVMAtom{block.TransactionsGenerator.Bytes}, ATOM_NULL}
 		b := [300]byte{}
 		pair = CLVMPair{CLVMAtom{b[:]}, ATOM_NULL}
 		*argsEnd = pair
-		argsEnd = &pair.Right
+		argsEnd = &pair.Rest
 	}
 	args = CLVMPair{block.TransactionsGenerator.Root, CLVMPair{args, ATOM_NULL}}
 	result := RunProgram(ROM_BOOTSTRAP_GENERATOR.Root, args)
 
 	fmt.Println("spent coins:")
-	res := result.(CLVMPair).Left
+	res := result.(CLVMPair).First
 	for !res.Nullp() {
-		cur := res.(CLVMPair).Left
-		spent_coin_parent_id := cur.(CLVMPair).Left.(CLVMAtom).Bytes                                  //bytes32
-		spent_coin_puzzle_hash := cur.(CLVMPair).Right.(CLVMPair).Left.(CLVMAtom).Bytes               //bytes32
-		spent_coin_amount := cur.(CLVMPair).Right.(CLVMPair).Right.(CLVMPair).Left.(CLVMAtom).AsInt() //uint64
+		cur := res.(CLVMPair).First
+		spent_coin_parent_id := cur.(CLVMPair).First.(CLVMAtom).Bytes                                //bytes32
+		spent_coin_puzzle_hash := cur.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom).Bytes              //bytes32
+		spent_coin_amount := cur.(CLVMPair).Rest.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom).AsInt() //uint64
 		// spent_coin: Coin = Coin(spent_coin_parent_id, spent_coin_puzzle_hash, spent_coin_amount)
 		fmt.Println(hex.EncodeToString(spent_coin_parent_id), hex.EncodeToString(spent_coin_puzzle_hash), spent_coin_amount)
-		res = res.(CLVMPair).Right
+		res = res.(CLVMPair).Rest
 	}
 
 	fmt.Println("done")

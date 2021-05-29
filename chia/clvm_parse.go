@@ -27,7 +27,7 @@ func _op_cons(opStack *[]interface{}, valStack *[]CLVMObject, buf *ParseBuf) {
 	right := (*valStack)[l-1]
 	left := (*valStack)[l-2]
 	*valStack = (*valStack)[:l-2]
-	*valStack = append(*valStack, CLVMPair{Left: left, Right: right})
+	*valStack = append(*valStack, CLVMPair{First: left, Rest: right})
 }
 
 func _atom_from_stream(buf *ParseBuf, b byte) *CLVMAtom {
@@ -148,10 +148,10 @@ func CLVMNextFromIRString(str string, pos int) (int, CLVMObject, error) {
 				item := items[i]
 				if obj, ok := item.(CLVMObject); ok {
 					if shouldCons {
-						list = CLVMPair{Left: obj, Right: list.(CLVMPair).Left}
+						list = CLVMPair{First: obj, Rest: list.(CLVMPair).First}
 						shouldCons = false
 					} else {
-						list = CLVMPair{Left: obj, Right: list}
+						list = CLVMPair{First: obj, Rest: list}
 					}
 				} else if ic, ok := item.(byte); ok && ic == '.' {
 					shouldCons = true
@@ -190,8 +190,8 @@ func CLVMNextFromIRString(str string, pos int) (int, CLVMObject, error) {
 				stack = append(stack, CLVMAtom{[]byte(token[1 : len(token)-1])})
 			} else {
 				// symbol
-				if b, ok := KEYWORD_TO_ATOM[token]; ok {
-					stack = append(stack, CLVMAtom{[]byte{b}})
+				if atom, ok := KEYWORD_TO_ATOM[token]; ok {
+					stack = append(stack, atom)
 				} else {
 					stack = append(stack, CLVMAtom{[]byte(token)})
 				}
