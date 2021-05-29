@@ -55,10 +55,11 @@ func main() {
 		">":  "gr",
 		">s": "gr_bytes",
 	}
-	var kwOmitFromList = map[string]bool{
-		".": true,
+	var kwNilListFunc = map[string]bool{
 		"q": true,
 		"a": true,
+	}
+	var kwOmitFromList = map[string]bool{
 		//TODO: implement
 		"x":              true,
 		"strlen":         true,
@@ -129,20 +130,24 @@ func main() {
 	keyword string
 	name string
 	atom CLVMAtom
-	f func(CLVMObject) CLVMObject
+	f func(CLVMObject) (int64, CLVMObject, error)
 }
 `)
 
 	write("var OP_FROM_BYTE = [256]OperatorInfo {\n")
 	prevGroupI := -1
 	for _, keyword := range keywords {
-		if _, ok := kwOmitFromList[keyword.kw]; !ok {
+		if _, ok := kwOmitFromList[keyword.kw]; !ok && keyword.kw != "." {
 			if keyword.groupIndex != prevGroupI {
 				write("// %s\n", keyword.groupComment)
 				prevGroupI = keyword.groupIndex
 			}
-			write("0x%02x: OperatorInfo{keyword: \"%s\", name: \"%s\", f: %s},\n",
-				keyword.code, keyword.kw, keyword.name, opFuncName(keyword.name))
+			funcName := "nil"
+			if _, ok := kwNilListFunc[keyword.kw]; !ok {
+				funcName = opFuncName(keyword.name)
+			}
+			write("0x%02x: {keyword: \"%s\", name: \"%s\", f: %s},\n",
+				keyword.code, keyword.kw, keyword.name, funcName)
 		}
 	}
 	write("}\n")
@@ -161,7 +166,7 @@ func main() {
 			if _, ok := kwAsConstAtom[keyword.kw]; ok {
 				write("\"%s\": %s,\n", keyword.kw, atomConstName(keyword.name))
 			} else {
-				write("\"%s\": CLVMAtom{[]byte{0x%02x}},\n", keyword.kw, keyword.code)
+				write("\"%s\": {[]byte{0x%02x}},\n", keyword.kw, keyword.code)
 			}
 		}
 	}

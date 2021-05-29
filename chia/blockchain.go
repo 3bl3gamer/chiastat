@@ -289,7 +289,10 @@ func EvalFullBlockFromDB(db *sql.DB, height uint32) error {
 		argsEnd = &pair.Rest
 	}
 	args = CLVMPair{block.TransactionsGenerator.Root, CLVMPair{args, ATOM_NULL}}
-	result := RunProgram(ROM_BOOTSTRAP_GENERATOR.Root, args)
+	_, result, err := RunProgram(ROM_BOOTSTRAP_GENERATOR.Root, args)
+	if err != nil {
+		return merry.Wrap(err)
+	}
 
 	fmt.Println("spent coins:")
 	res := result.(CLVMPair).First

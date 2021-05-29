@@ -1724,8 +1724,11 @@ func TestRunProgram(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RunProgram %s: %s", test.name, err)
 		}
-		res := RunProgram(cmd, args)
-		resStr := res.StringExt(false, false, true, true)
+		_, res, err := RunProgram(cmd, args)
+		if err != nil {
+			t.Fatalf("RunProgram %s: %s", test.name, err)
+		}
+		resStr := res.StringExt(CLVMStringExtCfg{Keywords: !test.noKeywords, OnlyHexValues: false, CompactLists: true, Nil: "()"})
 		if resStr != test.out {
 			t.Errorf("RunProgram %s: wrong output: %s != %s", test.name, resStr, test.out)
 		}

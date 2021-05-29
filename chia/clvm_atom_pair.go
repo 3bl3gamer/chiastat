@@ -3,6 +3,7 @@ package chia
 import (
 	"bytes"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"math/big"
 )
@@ -16,8 +17,23 @@ type CLVMObject interface {
 	Listp() bool
 	ListLen() int
 	String() string
-	StringExt(keywords bool, hexValues bool, bracketNil bool, compactLists bool) string
+	StringExt(CLVMStringExtCfg) string
 }
+
+type CLVMStringExtCfg struct {
+	Keywords      bool
+	OnlyHexValues bool
+	CompactLists  bool
+	Nil           string
+	isNotRoot     bool
+}
+
+func (cfg CLVMStringExtCfg) KeywordsAnd(val bool) CLVMStringExtCfg {
+	res := cfg
+	res.Keywords = res.Keywords && val
+	return res
+}
+
 type CLVMAtom struct {
 	Bytes []byte
 }
@@ -85,22 +101,22 @@ func (a CLVMAtom) AsInt32() int32 {
 	}
 	return int32(v)
 }
-func (a CLVMAtom) StringExt(keywords bool, hexValues bool, bracketNil bool, compactLists bool) string {
+func (a CLVMAtom) StringExt(cfg CLVMStringExtCfg) string {
 	if len(a.Bytes) == 0 {
-		if bracketNil {
-			return "()"
-		} else {
-			return "nil"
-		}
+		return cfg.Nil
 	}
-	if keywords && len(a.Bytes) == 1 {
+	if cfg.Keywords && cfg.isNotRoot && len(a.Bytes) == 1 {
+		fmt.Println(OP_FROM_BYTE[a.Bytes[0]], a.Bytes[0], a)
 		if op := OP_FROM_BYTE[a.Bytes[0]]; op.keyword != "" {
 			return op.keyword
 		}
 	}
-	if hexValues {
+	if cfg.OnlyHexValues {
 		return hex.EncodeToString(a.Bytes)
 	} else {
+		if len(a.Bytes) == 1 && a.Bytes[0] == 0 {
+			return "0x00"
+		}
 		if len(a.Bytes) <= 2 {
 			return (&big.Int{}).SetBytes(a.Bytes).String()
 		}
@@ -118,7 +134,7 @@ func (a CLVMAtom) StringExt(keywords bool, hexValues bool, bracketNil bool, comp
 	}
 }
 func (a CLVMAtom) String() string {
-	return a.StringExt(false, true, false, false)
+	return a.StringExt(CLVMStringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil"})
 }
 
 type CLVMPair struct {
@@ -145,27 +161,28 @@ func (a CLVMPair) ListLen() int {
 	}
 	return size
 }
-func (a CLVMPair) StringExt(keywords bool, hexValues bool, bracketNil bool, compactLists bool) string {
-	leftStr := a.First.StringExt(keywords, hexValues, bracketNil, compactLists)
-	if compactLists {
+func (a CLVMPair) StringExt(cfg CLVMStringExtCfg) string {
+	cfg.isNotRoot = true
+	leftStr := a.First.StringExt(cfg)
+	if cfg.CompactLists {
 		res := "(" + leftStr
 		cur := a.Rest
 		for !cur.Nullp() {
 			if pair, ok := cur.(CLVMPair); ok {
 				_, isAtom := pair.First.(CLVMAtom)
-				res += " " + pair.First.StringExt(keywords && !isAtom, hexValues, bracketNil, compactLists)
+				res += " " + pair.First.StringExt(cfg.KeywordsAnd(!isAtom))
 				cur = pair.Rest
 			} else {
-				res += " . " + cur.StringExt(false, hexValues, bracketNil, compactLists)
+				res += " . " + cur.StringExt(cfg.KeywordsAnd(false))
 				break
 			}
 		}
 		return res + ")"
 	}
 	_, rightIsAtom := a.Rest.(CLVMAtom)
-	rightStr := a.Rest.StringExt(keywords && !rightIsAtom, hexValues, bracketNil, compactLists)
+	rightStr := a.Rest.StringExt(cfg.KeywordsAnd(!rightIsAtom))
 	return "(" + leftStr + " . " + rightStr + ")"
 }
 func (a CLVMPair) String() string {
-	return a.StringExt(true, true, false, false)
+	return a.StringExt(CLVMStringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil"})
 }

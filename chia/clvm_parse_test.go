@@ -77,8 +77,9 @@ func TestCLVMFromIRString(t *testing.T) {
 		if err != nil {
 			t.Errorf("CLVMFromIRString '%s' failed: %s", ir, err)
 		}
-		if res.String() != dest {
-			t.Errorf("CLVMFromIRString '%s' result: %s != %s", ir, res, dest)
+		resStr := res.StringExt(CLVMStringExtCfg{Keywords: true, OnlyHexValues: true, CompactLists: false, Nil: "nil"})
+		if resStr != dest {
+			t.Errorf("CLVMFromIRString '%s' result: %s != %s", ir, resStr, dest)
 		}
 	}
 	testOk("0", "nil")
@@ -113,9 +114,9 @@ func TestCLVMFromIRString(t *testing.T) {
 	testOk("(1)", "(q . nil)")
 	testOk("(1024)", "(0400 . nil)")
 	testOk("(1 2)", "(q . (a . nil))")
-	testOk("(1 2 3)", "(q . (a . (if . nil)))")
+	testOk("(1 2 3)", "(q . (a . (i . nil)))")
 	testOk("(1 (2))", "(q . ((a . nil) . nil))")
-	testOk("(i () 1 2)", "(if . (nil . (q . (a . nil))))")
+	testOk("(i () 1 2)", "(i . (nil . (q . (a . nil))))")
 
 	testOk("(1 . 2)", "(q . 02)")
 	testOk("(1 . (2))", "(q . (a . nil))")
