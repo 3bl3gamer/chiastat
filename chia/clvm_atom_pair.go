@@ -90,7 +90,7 @@ func (a CLVMAtom) AsInt32() (int32, *EvalError) {
 	l := len(a.Bytes)
 	if l > 4 {
 		return 0, NewEvalError("int32 requires 4 bytes at most, got %d: 0x%s",
-			len(a.Bytes), hex.EncodeToString(a.Bytes)).With("atom", a)
+			l, hex.EncodeToString(a.Bytes)).With("atom", a)
 	}
 	var v uint32 = 0
 	if len(a.Bytes) > 0 && a.Bytes[0]&0x80 != 0 {
@@ -110,12 +110,35 @@ func (a CLVMAtom) AsInt32() (int32, *EvalError) {
 	}
 	return int32(v), nil
 }
+func (a CLVMAtom) AsInt64() (int64, *EvalError) {
+	l := len(a.Bytes)
+	if l > 8 {
+		return 0, NewEvalError("int64 requires 8 bytes at most, got %d: 0x%s",
+			l, hex.EncodeToString(a.Bytes)).With("atom", a)
+	}
+	var v uint64 = 0
+	if len(a.Bytes) > 0 && a.Bytes[0]&0x80 != 0 {
+		v = ^uint64(0)
+	}
+	for _, b := range a.Bytes {
+		v = (v << 8) + uint64(b)
+	}
+	return int64(v), nil
+}
+func (a CLVMAtom) AsBytes32() ([32]byte, *EvalError) {
+	if len(a.Bytes) != 32 {
+		return [32]byte{}, NewEvalError("expected 32 bytes, got %d: 0x%s",
+			len(a.Bytes), hex.EncodeToString(a.Bytes)).With("atom", a)
+	}
+	var res [32]byte
+	copy(res[:], a.Bytes)
+	return res, nil
+}
 func (a CLVMAtom) StringExt(cfg CLVMStringExtCfg) string {
 	if len(a.Bytes) == 0 {
 		return cfg.Nil
 	}
 	if cfg.Keywords && cfg.isNotRoot && len(a.Bytes) == 1 {
-		fmt.Println(OP_FROM_BYTE[a.Bytes[0]], a.Bytes[0], a)
 		if op := OP_FROM_BYTE[a.Bytes[0]]; op.keyword != "" {
 			return op.keyword
 		}
@@ -221,4 +244,53 @@ func (a CLVMPair) Dump() []byte {
 	var buf []byte
 	a.DumpTo(&buf)
 	return buf
+}
+
+type CLVMIter struct {
+	root  CLVMObject
+	cur   *CLVMPair
+	index int
+	err   *EvalError
+}
+
+func NewCLVMIter(obj CLVMObject) *CLVMIter {
+	return &CLVMIter{root: obj, index: -1}
+}
+
+func (iter *CLVMIter) Next() bool {
+	if iter.err != nil {
+		return false
+	}
+
+	var next CLVMObject
+	var logCur CLVMObject
+	if iter.cur == nil {
+		next = iter.root
+		logCur = iter.root
+	} else {
+		next = iter.cur.Rest
+		logCur = iter.cur
+	}
+
+	if next.Nullp() {
+		return false
+	}
+
+	pair, ok := next.(CLVMPair)
+	if !ok {
+		fmt.Printf("%#v\n", next)
+		iter.err = NewEvalError("wrong list: item.rest is atom on index %d", iter.index).With("item", logCur).With("list", iter.root)
+		return false
+	}
+	iter.cur = &pair
+	iter.index += 1
+	return true
+}
+
+func (iter CLVMIter) Get() CLVMObject {
+	return iter.cur.First
+}
+
+func (iter CLVMIter) Err() *EvalError {
+	return iter.err
 }

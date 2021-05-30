@@ -370,3 +370,14 @@ func BenchmarkDumpTo(b *testing.B) {
 		prog.Root.DumpTo(&outBuf)
 	}
 }
+
+func BenchmarkAdd(b *testing.B) {
+	prog, err := CLVMFromIRString("(+ 1 2 3 4 5 6 7 8 9 0)")
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		RunProgram(prog, ATOM_NULL)
+	}
+}

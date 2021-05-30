@@ -41,7 +41,7 @@ func TestCLVMAtomFromInt(t *testing.T) {
 }
 
 func TestCLVMAtomAsInt(t *testing.T) {
-	testOk := func(bufHex string, numStr string) {
+	test := func(bufHex string, numStr string, bitLen int) {
 		buf, err := hex.DecodeString(bufHex)
 		if err != nil {
 			log.Fatalf("wrong hex: %s", err)
@@ -51,25 +51,30 @@ func TestCLVMAtomAsInt(t *testing.T) {
 		if resStr != numStr {
 			t.Errorf("CLVMAtom{%s}.AsInt() = %s, expected %s", bufHex, resStr, numStr)
 		}
+		resBitLen := atom.AsInt().BitLen()
+		if bitLen >= 0 && resBitLen != bitLen {
+			t.Errorf("CLVMAtom{%s}.AsInt().BitLen() = %d, expected %d", bufHex, resBitLen, bitLen)
+		}
 	}
-	testOk("", "0")
-	testOk("01", "1")
-	testOk("02", "2")
-	testOk("7f", "127")
-	testOk("0080", "128")
-	testOk("0081", "129")
-	testOk("00c0", "192")
-	testOk("0400", "1024")
-	testOk("7f00", "32512")
-	testOk("7fff", "32767")
-	testOk("008000", "32768")
-	testOk("ff", "-1")
-	testOk("fe", "-2")
-	testOk("81", "-127")
-	testOk("80", "-128")
-	testOk("ff7f", "-129")
-	testOk("8000", "-32768")
-	testOk("ff7fff", "-32769")
+	test("", "0", 0)
+	test("01", "1", 1)
+	test("02", "2", 2)
+	test("7f", "127", 7)
+	test("0080", "128", 8)
+	test("0081", "129", 8)
+	test("00c0", "192", 8)
+	test("0400", "1024", 11)
+	test("7f00", "32512", 15)
+	test("7fff", "32767", 15)
+	test("008000", "32768", 16)
+	test("000000008000", "32768", 16)
+	test("ff", "-1", 1)
+	test("fe", "-2", 2)
+	test("81", "-127", 7)
+	test("80", "-128", 8)
+	test("ff7f", "-129", 8)
+	test("8000", "-32768", 16)
+	test("ff7fff", "-32769", 16)
 }
 
 func TestCLVMAtomAsInt32(t *testing.T) {
@@ -101,6 +106,7 @@ func TestCLVMAtomAsInt32(t *testing.T) {
 	test("7f00", "32512")
 	test("7fff", "32767")
 	test("008000", "32768")
+	test("00008000", "32768")
 	test("ff", "-1")
 	test("fe", "-2")
 	test("81", "-127")
@@ -111,7 +117,54 @@ func TestCLVMAtomAsInt32(t *testing.T) {
 	test("ffffffff", "-1")
 	test("7fffffff", "2147483647")
 	test("80000000", "-2147483648")
-	test("01ffddeecc", "FAIL: int32 requires 4 bytes at most, got 5: 0x01ffddeecc: atom=0x01ffddeecc")
+	test("01ffeeddcc", "FAIL: int32 requires 4 bytes at most, got 5: 0x01ffeeddcc: atom=0x01ffeeddcc")
+}
+
+func TestCLVMAtomAsInt64(t *testing.T) {
+	test := func(bufHex string, numStr string) {
+		buf, err := hex.DecodeString(bufHex)
+		if err != nil {
+			log.Fatalf("wrong hex: %s", err)
+		}
+		atom := CLVMAtom{buf}
+		resVal, resErr := atom.AsInt64()
+		var resStr string
+		if resErr == nil {
+			resStr = strconv.FormatInt(int64(resVal), 10)
+		} else {
+			resStr = "FAIL: " + resErr.Error()
+		}
+		if resStr != numStr {
+			t.Errorf("CLVMAtom{%s}.AsInt64() = %s, expected %s", bufHex, resStr, numStr)
+		}
+	}
+	test("", "0")
+	test("01", "1")
+	test("02", "2")
+	test("7f", "127")
+	test("0080", "128")
+	test("0081", "129")
+	test("00c0", "192")
+	test("0400", "1024")
+	test("7f00", "32512")
+	test("7fff", "32767")
+	test("008000", "32768")
+	test("000000008000", "32768")
+	test("ff", "-1")
+	test("fe", "-2")
+	test("81", "-127")
+	test("80", "-128")
+	test("ff7f", "-129")
+	test("8000", "-32768")
+	test("ff7fff", "-32769")
+	test("ffffffff", "-1")
+	test("7fffffff", "2147483647")
+	test("80000000", "-2147483648")
+	test("01ffeeddcc", "8588811724")
+	test("ffffffffffffffff", "-1")
+	test("7fffffffffffffff", "9223372036854775807")
+	test("8000000000000000", "-9223372036854775808")
+	test("01ffeeddccbbaa9988", "FAIL: int64 requires 8 bytes at most, got 9: 0x01ffeeddccbbaa9988: atom=0x01ffeeddccbbaa9988")
 }
 
 func TestCLVMFromIRString(t *testing.T) {

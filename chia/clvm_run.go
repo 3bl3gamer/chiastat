@@ -143,25 +143,64 @@ func opAdd(args CLVMObject) (int64, CLVMObject, error) {
 	total := big.NewInt(0)
 	cost := int64(ARITH_BASE_COST)
 	argSize := int64(0)
-	arg := args
-	for !arg.Nullp() {
-		if pair, ok := arg.(CLVMPair); ok {
-			if atom, ok := pair.First.(CLVMAtom); ok {
-				total.Add(total, atom.AsInt())
-				argSize += int64(len(atom.Bytes))
-				cost += ARITH_COST_PER_ARG
-			} else {
-				return cost, nil, NewEvalError("add on list").With("arg", pair.First)
-			}
-			arg = pair.Rest
+	argIter := NewCLVMIter(args)
+	for argIter.Next() {
+		item := argIter.Get()
+		if atom, ok := item.(CLVMAtom); ok {
+			total.Add(total, atom.AsInt())
+			argSize += int64(len(atom.Bytes))
+			cost += ARITH_COST_PER_ARG
 		} else {
-			return cost, nil, NewEvalError("add: arg.rest is atom").With("arg.rest", arg)
+			return cost, nil, NewEvalError("add on list").With("arg", item)
 		}
+	}
+	if err := argIter.Err(); err != nil {
+		return cost, nil, err
 	}
 	cost += argSize * ARITH_COST_PER_BYTE
 	cost, res := mallocCost(cost, CLVMAtomFromInt(total))
 	return cost, res, nil
 }
+
+func opMultiply(args CLVMObject) (int64, CLVMObject, error) {
+	cost := int64(MUL_BASE_COST)
+
+	argIter := NewCLVMIter(args)
+	if !argIter.Next() {
+		cost, res := mallocCost(cost, CLVMAtom{[]byte{1}})
+		return cost, res, nil
+	}
+
+	item := argIter.Get()
+	atom, ok := item.(CLVMAtom)
+	if !ok {
+		return cost, nil, NewEvalError("multiply on list").With("arg0", item)
+	}
+	v := atom.AsInt()
+	vs := len(atom.Bytes)
+
+	for argIter.Next() {
+		item := argIter.Get()
+		atom, ok := item.(CLVMAtom)
+		if !ok {
+			return cost, nil, NewEvalError("multiply on list").With("arg", item)
+		}
+		r := atom.AsInt()
+		rs := len(atom.Bytes)
+		cost += MUL_COST_PER_OP
+		cost += int64(rs+vs) * MUL_LINEAR_COST_PER_BYTE
+		cost += int64(rs*vs) / MUL_SQUARE_COST_PER_BYTE_DIVIDER
+		v.Mul(v, r)
+		vs = (v.BitLen() + 7) >> 3
+	}
+	if err := argIter.Err(); err != nil {
+		return cost, nil, err
+	}
+
+	cost, res := mallocCost(cost, CLVMAtomFromInt(v))
+	return cost, res, nil
+}
+
 func opSha256(args CLVMObject) (int64, CLVMObject, error) {
 	cost := int64(SHA256_BASE_COST)
 	argLen := int64(0)
@@ -441,7 +480,7 @@ func runApply(opStack *[]interface{}, valueStack *[]CLVMObject) (int64, error) {
 		*valueStack = append(*valueStack, r)
 		return cost, nil
 	} else {
-		return 0, NewEvalError("unknown op %s", hex.EncodeToString(op.Bytes)).With("args", operandList)
+		return 0, NewEvalError("unknown op 0x%s", hex.EncodeToString(op.Bytes)).With("args", operandList)
 	}
 }
 

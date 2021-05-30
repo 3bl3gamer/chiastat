@@ -17,14 +17,37 @@ var OP_FROM_BYTE = [256]OperatorInfo{
 	0x05: {keyword: "f", name: "first", f: opFirst},
 	0x06: {keyword: "r", name: "rest", f: opRest},
 	0x07: {keyword: "l", name: "listp", f: opListp},
+	0x08: {keyword: "x", name: "raise", f: nil},
 	// opcodes on atoms as strings 0x09-0x0f
 	0x09: {keyword: "=", name: "eq", f: opEq},
 	0x0a: {keyword: ">s", name: "gr_bytes", f: opGrBytes},
 	0x0b: {keyword: "sha256", name: "sha256", f: opSha256},
 	0x0c: {keyword: "substr", name: "substr", f: opSubstr},
+	0x0d: {keyword: "strlen", name: "strlen", f: nil},
 	0x0e: {keyword: "concat", name: "concat", f: opConcat},
 	// opcodes on atoms as ints 0x10-0x17
 	0x10: {keyword: "+", name: "add", f: opAdd},
+	0x11: {keyword: "-", name: "subtract", f: nil},
+	0x12: {keyword: "*", name: "multiply", f: opMultiply},
+	0x13: {keyword: "/", name: "div", f: nil},
+	0x14: {keyword: "divmod", name: "divmod", f: nil},
+	0x15: {keyword: ">", name: "gr", f: nil},
+	0x16: {keyword: "ash", name: "ash", f: nil},
+	0x17: {keyword: "lsh", name: "lsh", f: nil},
+	// opcodes on atoms as vectors of bools 0x18-0x1c
+	0x18: {keyword: "logand", name: "logand", f: nil},
+	0x19: {keyword: "logior", name: "logior", f: nil},
+	0x1a: {keyword: "logxor", name: "logxor", f: nil},
+	0x1b: {keyword: "lognot", name: "lognot", f: nil},
+	// opcodes for bls 1381 0x1d-0x1f
+	0x1d: {keyword: "point_add", name: "point_add", f: nil},
+	0x1e: {keyword: "pubkey_for_exp", name: "pubkey_for_exp", f: nil},
+	// bool opcodes 0x20-0x23
+	0x20: {keyword: "not", name: "not", f: nil},
+	0x21: {keyword: "any", name: "any", f: nil},
+	0x22: {keyword: "all", name: "all", f: nil},
+	// misc 0x24
+	0x24: {keyword: "softfork", name: "softfork", f: nil},
 }
 
 var ATOM_QUOTE = CLVMAtom{[]byte{0x01}}

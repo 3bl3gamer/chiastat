@@ -64,7 +64,6 @@ func main() {
 		"x":              true,
 		"strlen":         true,
 		"-":              true,
-		"*":              true,
 		"/":              true,
 		"divmod":         true,
 		">":              true,
@@ -137,14 +136,16 @@ func main() {
 	write("var OP_FROM_BYTE = [256]OperatorInfo {\n")
 	prevGroupI := -1
 	for _, keyword := range keywords {
-		if _, ok := kwOmitFromList[keyword.kw]; !ok && keyword.kw != "." {
+		if keyword.kw != "." {
 			if keyword.groupIndex != prevGroupI {
 				write("// %s\n", keyword.groupComment)
 				prevGroupI = keyword.groupIndex
 			}
 			funcName := "nil"
 			if _, ok := kwNilListFunc[keyword.kw]; !ok {
-				funcName = opFuncName(keyword.name)
+				if _, ok := kwOmitFromList[keyword.kw]; !ok {
+					funcName = opFuncName(keyword.name)
+				}
 			}
 			write("0x%02x: {keyword: \"%s\", name: \"%s\", f: %s},\n",
 				keyword.code, keyword.kw, keyword.name, funcName)

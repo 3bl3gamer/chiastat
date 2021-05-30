@@ -1696,8 +1696,6 @@ func calculateCostOffset() int64 {
 
 func TestRunProgram(t *testing.T) {
 	for _, test := range tests {
-		println(test.name, test.cmd)
-
 		if strings.HasPrefix(test.name, "all-") ||
 			strings.HasPrefix(test.name, "any-") ||
 			strings.HasPrefix(test.name, "ash-") ||
@@ -1709,7 +1707,6 @@ func TestRunProgram(t *testing.T) {
 			strings.HasPrefix(test.name, "lognot-") ||
 			strings.HasPrefix(test.name, "logxor-") ||
 			strings.HasPrefix(test.name, "lsh-") ||
-			strings.HasPrefix(test.name, "mul-") ||
 			strings.HasPrefix(test.name, "not-") ||
 			strings.HasPrefix(test.name, "point-add-") ||
 			strings.HasPrefix(test.name, "power-") ||
