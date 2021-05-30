@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"log"
 	"math/big"
+	"strconv"
 	"testing"
 )
 
@@ -69,6 +70,48 @@ func TestCLVMAtomAsInt(t *testing.T) {
 	testOk("ff7f", "-129")
 	testOk("8000", "-32768")
 	testOk("ff7fff", "-32769")
+}
+
+func TestCLVMAtomAsInt32(t *testing.T) {
+	test := func(bufHex string, numStr string) {
+		buf, err := hex.DecodeString(bufHex)
+		if err != nil {
+			log.Fatalf("wrong hex: %s", err)
+		}
+		atom := CLVMAtom{buf}
+		resVal, resErr := atom.AsInt32()
+		var resStr string
+		if resErr == nil {
+			resStr = strconv.FormatInt(int64(resVal), 10)
+		} else {
+			resStr = "FAIL: " + resErr.Error()
+		}
+		if resStr != numStr {
+			t.Errorf("CLVMAtom{%s}.AsInt32() = %s, expected %s", bufHex, resStr, numStr)
+		}
+	}
+	test("", "0")
+	test("01", "1")
+	test("02", "2")
+	test("7f", "127")
+	test("0080", "128")
+	test("0081", "129")
+	test("00c0", "192")
+	test("0400", "1024")
+	test("7f00", "32512")
+	test("7fff", "32767")
+	test("008000", "32768")
+	test("ff", "-1")
+	test("fe", "-2")
+	test("81", "-127")
+	test("80", "-128")
+	test("ff7f", "-129")
+	test("8000", "-32768")
+	test("ff7fff", "-32769")
+	test("ffffffff", "-1")
+	test("7fffffff", "2147483647")
+	test("80000000", "-2147483648")
+	test("01ffddeecc", "FAIL: int32 requires 4 bytes at most, got 5: 0x01ffddeecc: atom=0x01ffddeecc")
 }
 
 func TestCLVMFromIRString(t *testing.T) {

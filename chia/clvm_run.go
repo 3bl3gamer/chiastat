@@ -6,10 +6,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"math/big"
-
-	"github.com/ansel1/merry"
 )
 
 //go:generate go run gen/gen_clvm_ops_map.go -fname clvm_ops_map_generated.go
@@ -17,13 +14,58 @@ import (
 
 const RUN_DEBUG = false
 
+type EvalError struct {
+	Msg    string
+	Values map[string]CLVMObject
+}
+
+func (e *EvalError) Error() string {
+	res := e.Msg
+	if len(e.Values) > 0 {
+		isFirst := true
+		for k, v := range e.Values {
+			delim := ", "
+			if isFirst {
+				delim = ": "
+				isFirst = false
+			}
+			res += delim + k + "=" + v.StringExt(CLVM_STRING_EXT_CFG_ERRORS)
+		}
+	}
+	return res
+}
+func (e *EvalError) With(name string, value CLVMObject) *EvalError {
+	if e.Values == nil {
+		e.Values = make(map[string]CLVMObject)
+	}
+	e.Values[name] = value
+	return e
+}
+func NewEvalError(format string, a ...interface{}) *EvalError {
+	return &EvalError{
+		Msg: fmt.Sprintf(format, a...),
+	}
+}
+
 func mallocCost(cost int64, atom CLVMAtom) (int64, CLVMAtom) {
 	return cost + int64(len(atom.Bytes))*MALLOC_COST_PER_BYTE, atom
 }
 
+func ensureArgsLen(funcName string, args CLVMObject, length int) *EvalError {
+	s := ""
+	if length > 1 {
+		s = "s"
+	}
+	if args.ListLen() != length {
+		return NewEvalError("%s takes exactly %d argument%s, got %d", funcName, length, s, args.ListLen()).
+			With("args", args)
+	}
+	return nil
+}
+
 func opIf(args CLVMObject) (int64, CLVMObject, error) {
-	if args.ListLen() != 3 {
-		log.Fatalf("i takes exactly 3 arguments: %s", args)
+	if err := ensureArgsLen("i", args, 3); err != nil {
+		return 0, nil, err
 	}
 	r := args.(CLVMPair).Rest.(CLVMPair)
 	if args.(CLVMPair).First.Nullp() {
@@ -32,22 +74,30 @@ func opIf(args CLVMObject) (int64, CLVMObject, error) {
 	return IF_COST, r.First, nil
 }
 func opCons(args CLVMObject) (int64, CLVMObject, error) {
-	if args.ListLen() != 2 {
-		log.Fatalf("c takes exactly 2 arguments, got %d: %s", args.ListLen(), args)
+	if err := ensureArgsLen("c", args, 2); err != nil {
+		return 0, nil, err
 	}
 	return CONS_COST, CLVMPair{args.(CLVMPair).First, args.(CLVMPair).Rest.(CLVMPair).First}, nil
 }
 func opFirst(args CLVMObject) (int64, CLVMObject, error) {
-	if args.ListLen() != 1 {
-		log.Fatalf("f takes exactly 1 argument: %s", args)
+	if err := ensureArgsLen("f", args, 1); err != nil {
+		return 0, nil, err
 	}
-	return FIRST_COST, args.(CLVMPair).First.(CLVMPair).First, nil
+	a0, ok := args.(CLVMPair).First.(CLVMPair)
+	if !ok {
+		return 0, nil, NewEvalError("first of non-cons").With("arg", args.(CLVMPair).First)
+	}
+	return FIRST_COST, a0.First, nil
 }
 func opRest(args CLVMObject) (int64, CLVMObject, error) {
-	if args.ListLen() != 1 {
-		log.Fatalf("r takes exactly 1 argument: %s", args)
+	if err := ensureArgsLen("r", args, 1); err != nil {
+		return 0, nil, err
 	}
-	return REST_COST, args.(CLVMPair).First.(CLVMPair).Rest, nil
+	a0, ok := args.(CLVMPair).First.(CLVMPair)
+	if !ok {
+		return 0, nil, NewEvalError("rest of non-cons").With("arg", args.(CLVMPair).First)
+	}
+	return REST_COST, a0.Rest, nil
 }
 
 // def op_rest(args):
@@ -56,8 +106,8 @@ func opRest(args CLVMObject) (int64, CLVMObject, error) {
 //     return REST_COST, args.first().rest()
 
 func opListp(args CLVMObject) (int64, CLVMObject, error) {
-	if args.ListLen() != 1 {
-		log.Fatalf("l takes exactly 1 argument: %s", args)
+	if err := ensureArgsLen("l", args, 1); err != nil {
+		return 0, nil, err
 	}
 	if args.(CLVMPair).First.Listp() {
 		return LISTP_COST, ATOM_TRUE, nil
@@ -70,16 +120,16 @@ func opListp(args CLVMObject) (int64, CLVMObject, error) {
 //     raise EvalError("clvm raise", args)
 
 func opEq(args CLVMObject) (int64, CLVMObject, error) {
-	if args.ListLen() != 2 {
-		log.Fatalf("= takes exactly 2 arguments: %s", args)
+	if err := ensureArgsLen("=", args, 2); err != nil {
+		return 0, nil, err
 	}
 	a0, ok0 := args.(CLVMPair).First.(CLVMAtom)
 	a1, ok1 := args.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom)
 	if !ok0 {
-		log.Fatalf("= on list: %s", a0)
+		return 0, nil, NewEvalError("= on list").With("arg0", args.(CLVMPair).First)
 	}
 	if !ok1 {
-		log.Fatalf("= on list: %s", a1)
+		return 0, nil, NewEvalError("= on list").With("arg1", args.(CLVMPair).Rest.(CLVMPair).First)
 	}
 	cost := int64(EQ_BASE_COST)
 	cost += int64(len(a0.Bytes)+len(a1.Bytes)) * EQ_COST_PER_BYTE
@@ -101,11 +151,11 @@ func opAdd(args CLVMObject) (int64, CLVMObject, error) {
 				argSize += int64(len(atom.Bytes))
 				cost += ARITH_COST_PER_ARG
 			} else {
-				log.Fatalf("add: arg.left not an atom: %s", pair.First)
+				return cost, nil, NewEvalError("add on list").With("arg", pair.First)
 			}
 			arg = pair.Rest
 		} else {
-			log.Fatalf("add: arg not a pair: %s", arg)
+			return cost, nil, NewEvalError("add: arg.rest is atom").With("arg.rest", arg)
 		}
 	}
 	cost += argSize * ARITH_COST_PER_BYTE
@@ -124,11 +174,11 @@ func opSha256(args CLVMObject) (int64, CLVMObject, error) {
 				cost += SHA256_COST_PER_ARG
 				h.Write(atom.Bytes)
 			} else {
-				log.Fatalf("sha256: arg.left not an atom: %s", pair.First)
+				return cost, nil, NewEvalError("sha256 on list").With("arg", pair.First)
 			}
 			arg = pair.Rest
 		} else {
-			log.Fatalf("sha256: arg not a pair: %s", arg)
+			return cost, nil, NewEvalError("sha256: arg.rest is atom").With("arg.rest", arg)
 		}
 	}
 	cost += argLen * SHA256_COST_PER_BYTE
@@ -136,18 +186,16 @@ func opSha256(args CLVMObject) (int64, CLVMObject, error) {
 	return cost, res, nil
 }
 func opGrBytes(args CLVMObject) (int64, CLVMObject, error) {
-	// argList := list(args.as_iter())
-	argCount := args.ListLen()
-	if argCount != 2 {
-		log.Fatalf(">s takes exactly 2 arguments: %s", args)
+	if err := ensureArgsLen(">s", args, 2); err != nil {
+		return 0, nil, err
 	}
 	a0, ok0 := args.(CLVMPair).First.(CLVMAtom)
 	a1, ok1 := args.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom)
 	if !ok0 {
-		log.Fatalf(">s on list: %s", a0)
+		return 0, nil, NewEvalError(">s on list").With("arg0", args.(CLVMPair).First)
 	}
 	if !ok1 {
-		log.Fatalf(">s on list: %s", a1)
+		return 0, nil, NewEvalError(">s on list").With("arg1", args.(CLVMPair).Rest.(CLVMPair).First)
 	}
 	cost := int64(GRS_BASE_COST)
 	cost += int64(len(a0.Bytes)+len(a1.Bytes)) * GRS_COST_PER_BYTE
@@ -159,24 +207,38 @@ func opGrBytes(args CLVMObject) (int64, CLVMObject, error) {
 func opSubstr(args CLVMObject) (int64, CLVMObject, error) {
 	argCount := args.ListLen()
 	if argCount != 2 && argCount != 3 {
-		log.Fatalf("substr takes exactly 2 or 3 arguments: %s", args)
+		return 0, nil, NewEvalError("substr takes 2 or 3 arguments, got %d", argCount).With("args", args)
 	}
 	s0, ok := args.(CLVMPair).First.(CLVMAtom)
 	if !ok {
-		log.Fatalf("substr on list: %s", args.(CLVMPair).First)
+		return 0, nil, NewEvalError("substr on list").With("arg0", args.(CLVMPair).First)
+	}
+	a0, ok := args.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom)
+	if !ok {
+		return 0, nil, NewEvalError("substr on list").With("arg1", args.(CLVMPair).Rest.(CLVMPair).First)
 	}
 
-	var i1, i2 int32
+	i1, err := a0.AsInt32()
+	if err != nil {
+		return 0, nil, err
+	}
+
+	var i2 int32
 	if argCount == 2 {
-		i1 = args.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom).AsInt32()
 		i2 = int32(len(s0.Bytes))
 	} else {
-		i1 = args.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom).AsInt32()
-		i2 = args.(CLVMPair).Rest.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom).AsInt32()
+		a2, ok := args.(CLVMPair).Rest.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom)
+		if !ok {
+			return 0, nil, NewEvalError("substr on list").With("arg2", args.(CLVMPair).Rest.(CLVMPair).Rest.(CLVMPair).First)
+		}
+		i2, err = a2.AsInt32()
+		if err != nil {
+			return 0, nil, err
+		}
 	}
 
 	if i2 > int32(len(s0.Bytes)) || i2 < i1 || i2 < 0 || i1 < 0 {
-		log.Fatalf("invalid indices for substr: %s", args)
+		return 0, nil, NewEvalError("invalid indices for substr: i1=%d, i2=%d, len=%d", i1, i2, len(s0.Bytes)).With("args", args)
 	}
 	s := s0.Bytes[i1:i2]
 	cost := int64(1)
@@ -192,11 +254,11 @@ func opConcat(args CLVMObject) (int64, CLVMObject, error) {
 				s = append(s, atom.Bytes...)
 				cost += CONCAT_COST_PER_ARG
 			} else {
-				log.Fatalf("concat: arg.left not an atom: %s", pair.First)
+				return cost, nil, NewEvalError("concat on list").With("arg", pair.First)
 			}
 			arg = pair.Rest
 		} else {
-			log.Fatalf("concat: arg not a pair: %s", arg)
+			return cost, nil, NewEvalError("concat: arg.rest is atom").With("arg.rest", arg)
 		}
 	}
 	cost += int64(len(s)) * CONCAT_COST_PER_BYTE
@@ -264,7 +326,7 @@ func traversePath(sexp CLVMAtom, env CLVMObject) (int64, CLVMObject, error) {
 				bitmask = 0x01
 			}
 		} else {
-			return cost, nil, merry.Errorf("path into atom: %s", env)
+			return cost, nil, NewEvalError("path into atom").With("env", env)
 		}
 	}
 	return cost, env, nil
@@ -297,7 +359,7 @@ func runEval(opStack *[]interface{}, valueStack *[]CLVMObject) (int64, error) {
 	case CLVMAtom:
 		cost, r, err := traversePath(sexp, args)
 		if err != nil {
-			return cost, merry.Wrap(err)
+			return cost, err
 		}
 		*valueStack = append(*valueStack, r)
 		return cost, nil
@@ -307,10 +369,10 @@ func runEval(opStack *[]interface{}, valueStack *[]CLVMObject) (int64, error) {
 		case CLVMPair:
 			newOperator, mustBeNil := operator.First, operator.Rest
 			if newOperator.Listp() {
-				log.Fatalf("in ((X)...) syntax X must be lone atom: %#v", sexp)
+				return 0, NewEvalError("in ((X)...) syntax X must be lone atom").With("sexp", sexp)
 			}
 			if atom, ok := mustBeNil.(CLVMAtom); !ok || len(atom.Bytes) != 0 {
-				log.Fatalf("in ((X)...) syntax X must be lone atom: %#v", sexp)
+				return 0, NewEvalError("in ((X)...) syntax X must be lone atom").With("sexp", sexp)
 			}
 			newOperandList := sexp.Rest
 			*valueStack = append(*valueStack, newOperator)
@@ -336,12 +398,10 @@ func runEval(opStack *[]interface{}, valueStack *[]CLVMObject) (int64, error) {
 			*valueStack = append(*valueStack, ATOM_NULL)
 			return 1, nil
 		default:
-			log.Fatalf("unexpected operator: %T", operator)
-			return 0, nil
+			return 0, NewEvalError("unexpected operator").With("operator", operator)
 		}
 	default:
-		log.Fatalf("unexpected sexp: %T", sexp)
-		return 0, nil
+		return 0, NewEvalError("unexpected sexp").With("sexp", sexp)
 	}
 }
 
@@ -351,14 +411,13 @@ func runApply(opStack *[]interface{}, valueStack *[]CLVMObject) (int64, error) {
 
 	op, ok := operator.(CLVMAtom)
 	if !ok {
-		log.Fatalf("internal error: %#v", operator)
+		return 0, NewEvalError("internal error").With("operator", operator)
 	}
 
 	if op.Equal(ATOM_APPLY) {
 		operandListPair, ok := operandList.(CLVMPair)
 		if !ok || operandListPair.ListLen() != 2 {
-			log.Fatalf("apply requires exactly 2 parameters, got %d: %#v",
-				operandListPair.ListLen(), operandList)
+			return 0, NewEvalError("apply requires exactly 2 parameters, got %d", operandListPair.ListLen()).With("args", operandList)
 		}
 		newProgram := operandListPair.First
 		newArgs := operandListPair.Rest.(CLVMPair).First
@@ -377,12 +436,12 @@ func runApply(opStack *[]interface{}, valueStack *[]CLVMObject) (int64, error) {
 	if opFunc != nil { //TODO: more bytes/zero bytes
 		cost, r, err := opFunc(operandList)
 		if err != nil {
-			return 0, merry.Wrap(err)
+			return 0, err
 		}
 		*valueStack = append(*valueStack, r)
 		return cost, nil
 	} else {
-		return 0, merry.Errorf("unknown op %s with args %s", hex.EncodeToString(op.Bytes), operandList)
+		return 0, NewEvalError("unknown op %s", hex.EncodeToString(op.Bytes)).With("args", operandList)
 	}
 }
 
@@ -399,7 +458,7 @@ func RunProgram(program CLVMObject, args CLVMObject) (int64, CLVMObject, error) 
 		}
 		fCost, err := f(&opStack, &valueStack)
 		if err != nil {
-			return cost, nil, merry.Wrap(err)
+			return cost, nil, err
 		}
 		cost += fCost
 	}

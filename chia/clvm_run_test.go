@@ -10,8 +10,8 @@ var tests = []struct {
 	name       string
 	cmd        string
 	out        string
-	cost       int
-	maxCost    int
+	cost       int64
+	maxCost    int64
 	noKeywords bool
 	strict     bool
 	dump       bool
@@ -329,16 +329,16 @@ var tests = []struct {
 		out:  `"foobar"`,
 		cost: 540,
 	},
-	// {
-	// 	name: "concat-4",
-	// 	cmd:  `(concat (q . foo) (q . (bar)))`,
-	// 	out:  `FAIL: concat on list ("bar")`,
-	// },
-	// {
-	// 	name: "cons-1",
-	// 	cmd:  `(c)`,
-	// 	out:  `FAIL: c takes exactly 2 arguments ()`,
-	// },
+	{
+		name: "concat-4",
+		cmd:  `(concat (q . foo) (q . (bar)))`,
+		out:  `FAIL: concat on list: arg=("bar")`,
+	},
+	{
+		name: "cons-1",
+		cmd:  `(c)`,
+		out:  `FAIL: c takes exactly 2 arguments, got 0: args=nil`,
+	},
 	{
 		name: "cons-2",
 		cmd:  `(c (q . 100) (q . ()))`,
@@ -357,16 +357,16 @@ var tests = []struct {
 		out:  `(100 (500 (200 300 400)))`,
 		cost: 100,
 	},
-	// {
-	// 	name: "cons-5",
-	// 	cmd:  `(c (q . 100))`,
-	// 	out:  `FAIL: c takes exactly 2 arguments (100)`,
-	// },
-	// {
-	// 	name: "cons-as-op-1",
-	// 	cmd:  `((c (q . (+ (q . 50) 1)) (q . 500)))`,
-	// 	out:  `FAIL: in ((X)...) syntax X must be lone atom ((c (q 16 (q . 50) 1) (q . 500)))`,
-	// },
+	{
+		name: "cons-5",
+		cmd:  `(c (q . 100))`,
+		out:  `FAIL: c takes exactly 2 arguments, got 1: args=(100)`,
+	},
+	{
+		name: "cons-as-op-1",
+		cmd:  `((c (q . (+ (q . 50) 1)) (q . 500)))`,
+		out:  `FAIL: in ((X)...) syntax X must be lone atom: sexp=((c (q 16 (q . 50) 1) (q . 500)))`,
+	},
 	{
 		name: "div-1",
 		cmd:  `(/ 2 5) (80001 73)`,
@@ -623,24 +623,22 @@ var tests = []struct {
 		out:  `((100 101 102) 105)`,
 		cost: 53,
 	},
-	// {
-	// 	name:       "equal-1",
-	// 	cmd:        `(= (q . 10))`,
-	// 	out:        `FAIL: = takes exactly 2 arguments (10)`,
-	// 	cost:       -1,
-	// 	noKeywords: true,
-	// },
+	{
+		name: "equal-1",
+		cmd:  `(= (q . 10))`,
+		out:  `FAIL: = takes exactly 2 arguments, got 1: args=(>s)`,
+	},
 	{
 		name: "equal-10",
 		cmd:  `(= (q . 0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010) (q . 0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010))`,
 		out:  `1`,
 		cost: 857,
 	},
-	// {
-	// 	name: "equal-11",
-	// 	cmd:  `(= (q . 0) (q . (0)))`,
-	// 	out:  `FAIL: = on list (())`,
-	// },
+	{
+		name: "equal-11",
+		cmd:  `(= (q . 0) (q . (0)))`,
+		out:  `FAIL: = on list: arg1=(nil)`,
+	},
 	{
 		name: "equal-2",
 		cmd:  `(= (q . 10) (q . 10))`,
@@ -659,22 +657,22 @@ var tests = []struct {
 		out:  `1`,
 		cost: 167,
 	},
-	// {
-	// 	name: "equal-5",
-	// 	cmd:  `(= (q . (0)) (q . 0))`,
-	// 	out:  `FAIL: = on list (())`,
-	// },
+	{
+		name: "equal-5",
+		cmd:  `(= (q . (0)) (q . 0))`,
+		out:  `FAIL: = on list: arg0=(nil)`,
+	},
 	{
 		name: "equal-6",
 		cmd:  `(= (q . 2) (q . 3))`,
 		out:  `()`,
 		cost: 169,
 	},
-	// {
-	// 	name: "equal-7",
-	// 	cmd:  `(= 3 3)`,
-	// 	out:  `FAIL: path into atom ()`,
-	// },
+	{
+		name: "equal-7",
+		cmd:  `(= 3 3)`,
+		out:  `FAIL: path into atom: env=nil`,
+	},
 	{
 		name: "equal-8",
 		cmd:  `(= (f 1) (+ (f (r 1)) (f (r (r 1))))) (7 3 4)`,
@@ -693,24 +691,22 @@ var tests = []struct {
 		out:  `(100 200)`,
 		cost: 184,
 	},
-	// {
-	// 	name:       "eval-2",
-	// 	cmd:        `(a (q . 1))`,
-	// 	out:        `FAIL: apply requires exactly 2 parameters (1)`,
-	// 	cost:       -1,
-	// 	noKeywords: true,
-	// },
+	{
+		name: "eval-2",
+		cmd:  `(a (q . 1))`,
+		out:  `FAIL: apply requires exactly 2 parameters, got 1: args=(q)`,
+	},
 	{
 		name: "eval-3",
 		cmd:  `(a (q . (c (f 1) (q . (105 200)))) (q . (100 200)))`,
 		out:  `(100 105 200)`,
 		cost: 286,
 	},
-	// {
-	// 	name: "eval-4",
-	// 	cmd:  `(a (q . 0) (q . 1) (q . 2))`,
-	// 	out:  `FAIL: apply requires exactly 2 parameters (() 1 2)`,
-	// },
+	{
+		name: "eval-4",
+		cmd:  `(a (q . 0) (q . 1) (q . 2))`,
+		out:  `FAIL: apply requires exactly 2 parameters, got 3: args=(nil 1 2)`,
+	},
 	{
 		name: "first-1",
 		cmd:  `(f (q . (100)))`,
@@ -723,11 +719,11 @@ var tests = []struct {
 		out:  `1`,
 		cost: 60,
 	},
-	// {
-	// 	name: "first-3",
-	// 	cmd:  `(f (q . ()))`,
-	// 	out:  `FAIL: first of non-cons ()`,
-	// },
+	{
+		name: "first-3",
+		cmd:  `(f (q . ()))`,
+		out:  `FAIL: first of non-cons: arg=nil`,
+	},
 	{
 		name: "first-4",
 		cmd:  `(f (f (q . ((100 200 300) 400 500))))`,
@@ -740,11 +736,11 @@ var tests = []struct {
 		out:  `1`,
 		cost: 168,
 	},
-	// {
-	// 	name: "gr-s-10",
-	// 	cmd:  `(>s (q . 0x001004) (q . (100 200)))`,
-	// 	out:  `FAIL: >s on list (100 200)`,
-	// },
+	{
+		name: "gr-s-10",
+		cmd:  `(>s (q . 0x001004) (q . (100 200)))`,
+		out:  `FAIL: >s on list: arg1=(100 200)`,
+	},
 	{
 		name: "gr-s-2",
 		cmd:  `(>s (q . 0x01) (q . 0x00))`,
@@ -787,17 +783,15 @@ var tests = []struct {
 		out:  `1`,
 		cost: 172,
 	},
-	// {
-	// 	name: "gr-s-9",
-	// 	cmd:  `(>s (q . (100 200)) (q . 0x001004))`,
-	// 	out:  `FAIL: >s on list (100 200)`,
-	// },
 	{
-		name:       "greater-1",
-		cmd:        `(> (q . 10))`,
-		out:        `FAIL: > takes exactly 2 arguments (10)`,
-		cost:       -1,
-		noKeywords: true,
+		name: "gr-s-9",
+		cmd:  `(>s (q . (100 200)) (q . 0x001004))`,
+		out:  `FAIL: >s on list: arg0=(100 200)`,
+	},
+	{
+		name: "greater-1",
+		cmd:  `(> (q . 10))`,
+		out:  `FAIL: > takes exactly 2 arguments (10)`,
 	},
 	{
 		name: "greater-10",
@@ -958,16 +952,16 @@ var tests = []struct {
 		out:  `1`,
 		cost: 49,
 	},
-	// {
-	// 	name: "list-3",
-	// 	cmd:  `(l)`,
-	// 	out:  `FAIL: l takes exactly 1 argument ()`,
-	// },
-	// {
-	// 	name: "list-4",
-	// 	cmd:  `(l (q . 100) (q . 200))`,
-	// 	out:  `FAIL: l takes exactly 1 argument (100 200)`,
-	// },
+	{
+		name: "list-3",
+		cmd:  `(l)`,
+		out:  `FAIL: l takes exactly 1 argument, got 0: args=nil`,
+	},
+	{
+		name: "list-4",
+		cmd:  `(l (q . 100) (q . 200))`,
+		out:  `FAIL: l takes exactly 1 argument, got 2: args=(100 200)`,
+	},
 	{
 		name: "list-5",
 		cmd:  `(l 2) (50)`,
@@ -1459,11 +1453,11 @@ var tests = []struct {
 		out:  `(200 300)`,
 		cost: 60,
 	},
-	// {
-	// 	name: "rest-3",
-	// 	cmd:  `(r (q . ()))`,
-	// 	out:  `FAIL: rest of non-cons ()`,
-	// },
+	{
+		name: "rest-3",
+		cmd:  `(r (q . ()))`,
+		out:  `FAIL: rest of non-cons: arg=nil`,
+	},
 	{
 		name: "rest-4",
 		cmd:  `(r (r (q . ((100 200 300) 400 500))))`,
@@ -1488,11 +1482,11 @@ var tests = []struct {
 		out:  `0x5272821c151fdd49f19cc58cf8833da5781c7478a36d500e8dc2364be39f8216`,
 		cost: 918,
 	},
-	// {
-	// 	name: "sha256-4",
-	// 	cmd:  `(sha256 1) (hello)`,
-	// 	out:  `FAIL: sha256 on list ("hello")`,
-	// },
+	{
+		name: "sha256-4",
+		cmd:  `(sha256 1) (hello)`,
+		out:  `FAIL: sha256 on list: arg=("hello")`,
+	},
 	{
 		name: "simple_add",
 		cmd:  `(+ (q . 10) (q . 20))`,
@@ -1581,22 +1575,22 @@ var tests = []struct {
 		out:  `6`,
 		cost: 1144,
 	},
-	// {
-	// 	name: "substr-00",
-	// 	cmd:  `(substr (q . "abcdefghijkl") (q . 14))`,
-	// 	out:  `FAIL: invalid indices for substr ("abcdefghijkl" 14)`,
-	// },
+	{
+		name: "substr-00",
+		cmd:  `(substr (q . "abcdefghijkl") (q . 14))`,
+		out:  `FAIL: invalid indices for substr: i1=14, i2=12, len=12: args=("abcdefghijkl" 14)`,
+	},
 	{
 		name: "substr-01",
 		cmd:  `(substr (q . "abcdefghijkl") (q . 0))`,
 		out:  `"abcdefghijkl"`,
 		cost: 51,
 	},
-	// {
-	// 	name: "substr-02",
-	// 	cmd:  `(substr (q . "abcdefghijkl") (q . -1))`,
-	// 	out:  `FAIL: invalid indices for substr ("abcdefghijkl" -1)`,
-	// },
+	{
+		name: "substr-02",
+		cmd:  `(substr (q . "abcdefghijkl") (q . -1))`,
+		out:  `FAIL: invalid indices for substr: i1=-1, i2=12, len=12: args=("abcdefghijkl" -1)`,
+	},
 	{
 		name: "substr-03",
 		cmd:  `(substr (q . "abcdefghijkl") (q . 12))`,
@@ -1621,27 +1615,27 @@ var tests = []struct {
 		out:  `"abcdefghijkl"`,
 		cost: 131,
 	},
-	// {
-	// 	name: "substr-07",
-	// 	cmd:  `(substr (q . "abcdefghijkl") 2 5) (-1 12)`,
-	// 	out:  `FAIL: invalid indices for substr ("abcdefghijkl" -1 12)`,
-	// },
-	// {
-	// 	name: "substr-08",
-	// 	cmd:  `(substr (q . "abcdefghijkl") 2 5) (0 13)`,
-	// 	out:  `FAIL: invalid indices for substr ("abcdefghijkl" () 13)`,
-	// },
+	{
+		name: "substr-07",
+		cmd:  `(substr (q . "abcdefghijkl") 2 5) (-1 12)`,
+		out:  `FAIL: invalid indices for substr: i1=-1, i2=12, len=12: args=("abcdefghijkl" -1 12)`,
+	},
+	{
+		name: "substr-08",
+		cmd:  `(substr (q . "abcdefghijkl") 2 5) (0 13)`,
+		out:  `FAIL: invalid indices for substr: i1=0, i2=13, len=12: args=("abcdefghijkl" nil 13)`,
+	},
 	{
 		name: "substr-09",
 		cmd:  `(substr (q . "abcdefghijkl") 2 5) (10 10)`,
 		out:  `()`,
 		cost: 131,
 	},
-	// {
-	// 	name: "substr-10",
-	// 	cmd:  `(substr (q . "abcdefghijkl") 2 5) (10 9)`,
-	// 	out:  `FAIL: invalid indices for substr ("abcdefghijkl" 10 9)`,
-	// },
+	{
+		name: "substr-10",
+		cmd:  `(substr (q . "abcdefghijkl") 2 5) (10 9)`,
+		out:  `FAIL: invalid indices for substr: i1=10, i2=9, len=12: args=("abcdefghijkl" 10 9)`,
+	},
 	{
 		name: "substr-11",
 		cmd:  `(substr (q . "abcdefghijkl") 2 5) (1 4)`,
@@ -1654,43 +1648,50 @@ var tests = []struct {
 		out:  `"ijkl"`,
 		cost: 131,
 	},
-	// {
-	// 	name: "substr-13",
-	// 	cmd:  `(substr (q . ("abcdefghijkl")) 2 5) (0 4)`,
-	// 	out:  `FAIL: substr on list ("abcdefghijkl")`,
-	// },
-	// {
-	// 	name: "substr-14",
-	// 	cmd:  `(substr (q . "abcdefghijkl") 2 5) ((0) 4)`,
-	// 	out:  `FAIL: substr requires int32 args (())`,
-	// },
-	// {
-	// 	name:       "substr-15",
-	// 	cmd:        `(substr (q . "abcdefghijkl") 2 5) (0 (4))`,
-	// 	out:        `FAIL: substr requires int32 args (4)`,
-	// 	cost:       -1,
-	// 	noKeywords: true,
-	// },
-	// {
-	// 	name: "substr-16",
-	// 	cmd:  `(substr (q . "abcdefghijkl") (q . 0x000000000000000000000000000000000000000000000000000000000000000002) (q . 0x0000000000000000000000000000000000000000000000000000000000000005))`,
-	// 	out:  `FAIL: substr requires int32 args (with no leading zeros) 0x000000000000000000000000000000000000000000000000000000000000000002`,
-	// },
-	// {
-	// 	name: "substr-17",
-	// 	cmd:  `(substr (q . "abcdefghijkl") 2 5) (0 -1)`,
-	// 	out:  `FAIL: invalid indices for substr ("abcdefghijkl" () -1)`,
-	// },
-	// {
-	// 	name: "substr-18",
-	// 	cmd:  `(substr (q . "abcdefghijkl") 2 5) (4294967297 3)`,
-	// 	out:  `FAIL: substr requires int32 args (with no leading zeros) 0x0100000001`,
-	// },
+	{
+		name: "substr-13",
+		cmd:  `(substr (q . ("abcdefghijkl")) 2 5) (0 4)`,
+		out:  `FAIL: substr on list: arg0=("abcdefghijkl")`,
+	},
+	{
+		name: "substr-14",
+		cmd:  `(substr (q . "abcdefghijkl") 2 5) ((0) 4)`,
+		out:  `FAIL: substr on list: arg1=(nil)`,
+	},
+	{
+		name: "substr-15",
+		cmd:  `(substr (q . "abcdefghijkl") 2 5) (0 (4))`,
+		out:  `FAIL: substr on list: arg2=(c)`,
+	},
+	{
+		name: "substr-16",
+		cmd:  `(substr (q . "abcdefghijkl") (q . 0x000000000000000000000000000000000000000000000000000000000000000002) (q . 0x0000000000000000000000000000000000000000000000000000000000000005))`,
+		out:  `FAIL: int32 requires 4 bytes at most, got 33: 0x000000000000000000000000000000000000000000000000000000000000000002: atom=0x000000000000000000000000000000000000000000000000000000000000000002`,
+	},
+	{
+		name: "substr-17",
+		cmd:  `(substr (q . "abcdefghijkl") 2 5) (0 -1)`,
+		out:  `FAIL: invalid indices for substr: i1=0, i2=-1, len=12: args=("abcdefghijkl" nil -1)`,
+	},
+	{
+		name: "substr-18",
+		cmd:  `(substr (q . "abcdefghijkl") 2 5) (4294967297 3)`,
+		out:  `FAIL: int32 requires 4 bytes at most, got 5: 0x0100000001: atom=0x0100000001`,
+	},
 	// {
 	// 	name: "unknown-0",
 	// 	cmd:  `(a (q 0x00ffffffffffffffffffff00) (q ()))`,
 	// 	out:  `FAIL: invalid operator 0x00ffffffffffffffffffff00`,
 	// },
+}
+
+// https://github.com/Chia-Network/clvm_tools/blob/main/clvm_tools/cmds.py#L107
+func calculateCostOffset() int64 {
+	cost, _, err := RunProgram(ATOM_NULL, ATOM_NULL)
+	if err != nil {
+		panic(err)
+	}
+	return 53 - cost
 }
 
 func TestRunProgram(t *testing.T) {
@@ -1725,18 +1726,24 @@ func TestRunProgram(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RunProgram %s: %s", test.name, err)
 		}
-		_, res, err := RunProgram(cmd, args)
-		if err != nil {
-			t.Fatalf("RunProgram %s: %s", test.name, err)
-		}
+		resCost, res, err := RunProgram(cmd, args)
 		var resStr string
-		if test.dump {
-			resStr = hex.EncodeToString(res.Dump())
+		if err == nil {
+			if test.dump {
+				resStr = hex.EncodeToString(res.Dump())
+			} else {
+				resStr = res.StringExt(CLVMStringExtCfg{Keywords: !test.noKeywords, OnlyHexValues: false, CompactLists: true, Nil: "()"})
+			}
 		} else {
-			resStr = res.StringExt(CLVMStringExtCfg{Keywords: !test.noKeywords, OnlyHexValues: false, CompactLists: true, Nil: "()"})
+			resStr = "FAIL: " + err.Error()
 		}
 		if resStr != test.out {
 			t.Errorf("RunProgram %s: wrong output: %s != %s", test.name, resStr, test.out)
+		}
+		// calculate_cost_offset https://github.com/Chia-Network/clvm_tools/blob/main/clvm_tools/cmds.py#L107
+		costOffset := calculateCostOffset()
+		if test.cost != 0 && test.cost != resCost+costOffset {
+			t.Errorf("RunProgram %s: wrong cost: %d != %d", test.name, resCost+costOffset, test.cost)
 		}
 	}
 }

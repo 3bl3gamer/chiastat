@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"math/big"
 )
 
@@ -27,6 +26,7 @@ type CLVMStringExtCfg struct {
 	OnlyHexValues bool
 	CompactLists  bool
 	Nil           string
+	MaxDepth      int
 	isNotRoot     bool
 }
 
@@ -35,6 +35,9 @@ func (cfg CLVMStringExtCfg) KeywordsAnd(val bool) CLVMStringExtCfg {
 	res.Keywords = res.Keywords && val
 	return res
 }
+
+var CLVM_STRING_EXT_CFG_DEFAULT = CLVMStringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil"}
+var CLVM_STRING_EXT_CFG_ERRORS = CLVMStringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil", MaxDepth: 4}
 
 type CLVMAtom struct {
 	Bytes []byte
@@ -83,14 +86,18 @@ func CLVMAtomFromInt(v *big.Int) CLVMAtom {
 	}
 	return CLVMAtom{bytes}
 }
-func (a CLVMAtom) AsInt32() int32 {
+func (a CLVMAtom) AsInt32() (int32, *EvalError) {
 	l := len(a.Bytes)
 	if l > 4 {
-		log.Fatalf("int32 requires 4 bytes at most, got %d: 0x%s", len(a.Bytes), hex.EncodeToString(a.Bytes))
+		return 0, NewEvalError("int32 requires 4 bytes at most, got %d: 0x%s",
+			len(a.Bytes), hex.EncodeToString(a.Bytes)).With("atom", a)
 	}
 	var v uint32 = 0
+	if len(a.Bytes) > 0 && a.Bytes[0]&0x80 != 0 {
+		v = ^uint32(0)
+	}
 	if l > 0 {
-		v = uint32(a.Bytes[0])
+		v = (v << 8) + uint32(a.Bytes[0])
 	}
 	if l > 1 {
 		v = (v << 8) + uint32(a.Bytes[1])
@@ -101,7 +108,7 @@ func (a CLVMAtom) AsInt32() int32 {
 	if l > 3 {
 		v = (v << 8) + uint32(a.Bytes[3])
 	}
-	return int32(v)
+	return int32(v), nil
 }
 func (a CLVMAtom) StringExt(cfg CLVMStringExtCfg) string {
 	if len(a.Bytes) == 0 {
@@ -120,7 +127,7 @@ func (a CLVMAtom) StringExt(cfg CLVMStringExtCfg) string {
 			return "0x00"
 		}
 		if len(a.Bytes) <= 2 {
-			return (&big.Int{}).SetBytes(a.Bytes).String()
+			return a.AsInt().String()
 		}
 		allPrintable := true
 		for _, c := range a.Bytes {
@@ -136,7 +143,7 @@ func (a CLVMAtom) StringExt(cfg CLVMStringExtCfg) string {
 	}
 }
 func (a CLVMAtom) String() string {
-	return a.StringExt(CLVMStringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil"})
+	return a.StringExt(CLVM_STRING_EXT_CFG_DEFAULT)
 }
 func (a CLVMAtom) DumpTo(buf *[]byte) {
 	SerializeAtomBytes(buf, a.Bytes)
@@ -172,6 +179,15 @@ func (a CLVMPair) ListLen() int {
 	return size
 }
 func (a CLVMPair) StringExt(cfg CLVMStringExtCfg) string {
+	if cfg.MaxDepth < 0 {
+		return "..."
+	}
+	if cfg.MaxDepth > 0 {
+		cfg.MaxDepth -= 1
+		if cfg.MaxDepth == 0 {
+			cfg.MaxDepth = -1
+		}
+	}
 	cfg.isNotRoot = true
 	leftStr := a.First.StringExt(cfg)
 	if cfg.CompactLists {
@@ -194,7 +210,7 @@ func (a CLVMPair) StringExt(cfg CLVMStringExtCfg) string {
 	return "(" + leftStr + " . " + rightStr + ")"
 }
 func (a CLVMPair) String() string {
-	return a.StringExt(CLVMStringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil"})
+	return a.StringExt(CLVM_STRING_EXT_CFG_DEFAULT)
 }
 func (a CLVMPair) DumpTo(buf *[]byte) {
 	*buf = append(*buf, CONS_BOX_MARKER)
