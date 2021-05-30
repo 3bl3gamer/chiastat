@@ -18,6 +18,8 @@ type CLVMObject interface {
 	ListLen() int
 	String() string
 	StringExt(CLVMStringExtCfg) string
+	DumpTo(*[]byte)
+	Dump() []byte
 }
 
 type CLVMStringExtCfg struct {
@@ -136,6 +138,14 @@ func (a CLVMAtom) StringExt(cfg CLVMStringExtCfg) string {
 func (a CLVMAtom) String() string {
 	return a.StringExt(CLVMStringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil"})
 }
+func (a CLVMAtom) DumpTo(buf *[]byte) {
+	SerializeAtomBytes(buf, a.Bytes)
+}
+func (a CLVMAtom) Dump() []byte {
+	var buf []byte
+	a.DumpTo(&buf)
+	return buf
+}
 
 type CLVMPair struct {
 	First CLVMObject
@@ -185,4 +195,14 @@ func (a CLVMPair) StringExt(cfg CLVMStringExtCfg) string {
 }
 func (a CLVMPair) String() string {
 	return a.StringExt(CLVMStringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil"})
+}
+func (a CLVMPair) DumpTo(buf *[]byte) {
+	*buf = append(*buf, CONS_BOX_MARKER)
+	a.First.DumpTo(buf)
+	a.Rest.DumpTo(buf)
+}
+func (a CLVMPair) Dump() []byte {
+	var buf []byte
+	a.DumpTo(&buf)
+	return buf
 }

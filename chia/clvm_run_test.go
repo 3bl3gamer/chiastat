@@ -1,6 +1,7 @@
 package chia
 
 import (
+	"encoding/hex"
 	"strings"
 	"testing"
 )
@@ -1728,7 +1729,12 @@ func TestRunProgram(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RunProgram %s: %s", test.name, err)
 		}
-		resStr := res.StringExt(CLVMStringExtCfg{Keywords: !test.noKeywords, OnlyHexValues: false, CompactLists: true, Nil: "()"})
+		var resStr string
+		if test.dump {
+			resStr = hex.EncodeToString(res.Dump())
+		} else {
+			resStr = res.StringExt(CLVMStringExtCfg{Keywords: !test.noKeywords, OnlyHexValues: false, CompactLists: true, Nil: "()"})
+		}
 		if resStr != test.out {
 			t.Errorf("RunProgram %s: wrong output: %s != %s", test.name, resStr, test.out)
 		}

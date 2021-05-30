@@ -271,6 +271,8 @@ func EvalFullBlockFromDB(db *sql.DB, height uint32) error {
 	}
 	fmt.Println("ref list:", block.TransactionsGeneratorRefList)
 
+	fmt.Println(hex.EncodeToString(block.TransactionsGenerator.Bytes))
+
 	refBlocks := make([]*FullBlock, len(block.TransactionsGeneratorRefList))
 	for i, refHeight := range block.TransactionsGeneratorRefList {
 		refBlocks[i], err = FullBlockByHeight(db, refHeight)

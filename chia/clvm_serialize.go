@@ -2,14 +2,16 @@ package chia
 
 import "log"
 
-func SerializeAtomBytes(buf []byte) []byte {
+func SerializeAtomBytes(outBuf *[]byte, buf []byte) {
 	size := len(buf)
 	if size == 0 {
-		return []byte{0x80}
+		*outBuf = append(*outBuf, 0x80)
+		return
 	}
 	if size == 1 {
 		if buf[0] <= MAX_SINGLE_BYTE {
-			return []byte{buf[0]}
+			*outBuf = append(*outBuf, buf[0])
+			return
 		}
 	}
 	var sizeBuf []byte
@@ -37,8 +39,6 @@ func SerializeAtomBytes(buf []byte) []byte {
 	} else {
 		log.Fatalf("atom buf too long: %d", len(buf))
 	}
-	res := make([]byte, len(sizeBuf)+size)
-	copy(res, sizeBuf)
-	copy(res[len(sizeBuf):], buf)
-	return res
+	*outBuf = append(*outBuf, sizeBuf...)
+	*outBuf = append(*outBuf, buf...)
 }
