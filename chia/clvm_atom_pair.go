@@ -3,7 +3,6 @@ package chia
 import (
 	"bytes"
 	"encoding/hex"
-	"fmt"
 	"math/big"
 )
 
@@ -46,12 +45,15 @@ type CLVMAtom struct {
 func (a CLVMAtom) Nullp() bool {
 	return len(a.Bytes) == 0
 }
+
 func (a CLVMAtom) Listp() bool {
 	return false
 }
+
 func (a CLVMAtom) ListLen() int {
 	return 0
 }
+
 func (a CLVMAtom) AsInt() *big.Int {
 	if len(a.Bytes) > 0 && a.Bytes[0]&0x80 != 0 {
 		buf := make([]byte, len(a.Bytes))
@@ -65,27 +67,11 @@ func (a CLVMAtom) AsInt() *big.Int {
 		return new(big.Int).SetBytes(a.Bytes)
 	}
 }
+
 func (a CLVMAtom) Equal(other CLVMAtom) bool {
 	return bytes.Equal(a.Bytes, other.Bytes)
 }
-func CLVMAtomFromInt(v *big.Int) CLVMAtom {
-	if v.Sign() == 0 {
-		return ATOM_NULL
-	}
-	var bytes []byte
-	if v.Sign() < 0 {
-		v = new(big.Int).Not(v)
-		bytes = make([]byte, v.BitLen()/8+1)
-		v.FillBytes(bytes)
-		for i, b := range bytes {
-			bytes[i] = ^b
-		}
-	} else {
-		bytes = make([]byte, v.BitLen()/8+1)
-		v.FillBytes(bytes)
-	}
-	return CLVMAtom{bytes}
-}
+
 func (a CLVMAtom) AsInt32() (int32, *EvalError) {
 	l := len(a.Bytes)
 	if l > 4 {
@@ -110,6 +96,7 @@ func (a CLVMAtom) AsInt32() (int32, *EvalError) {
 	}
 	return int32(v), nil
 }
+
 func (a CLVMAtom) AsInt64() (int64, *EvalError) {
 	l := len(a.Bytes)
 	if l > 8 {
@@ -125,6 +112,7 @@ func (a CLVMAtom) AsInt64() (int64, *EvalError) {
 	}
 	return int64(v), nil
 }
+
 func (a CLVMAtom) AsBytes32() ([32]byte, *EvalError) {
 	if len(a.Bytes) != 32 {
 		return [32]byte{}, NewEvalError("expected 32 bytes, got %d: 0x%s",
@@ -134,6 +122,7 @@ func (a CLVMAtom) AsBytes32() ([32]byte, *EvalError) {
 	copy(res[:], a.Bytes)
 	return res, nil
 }
+
 func (a CLVMAtom) StringExt(cfg CLVMStringExtCfg) string {
 	if len(a.Bytes) == 0 {
 		return cfg.Nil
@@ -165,16 +154,38 @@ func (a CLVMAtom) StringExt(cfg CLVMStringExtCfg) string {
 		return "0x" + hex.EncodeToString(a.Bytes)
 	}
 }
+
 func (a CLVMAtom) String() string {
 	return a.StringExt(CLVM_STRING_EXT_CFG_DEFAULT)
 }
+
 func (a CLVMAtom) DumpTo(buf *[]byte) {
 	SerializeAtomBytes(buf, a.Bytes)
 }
+
 func (a CLVMAtom) Dump() []byte {
 	var buf []byte
 	a.DumpTo(&buf)
 	return buf
+}
+
+func CLVMAtomFromInt(v *big.Int) CLVMAtom {
+	if v.Sign() == 0 {
+		return ATOM_NULL
+	}
+	var bytes []byte
+	if v.Sign() < 0 {
+		v = new(big.Int).Not(v)
+		bytes = make([]byte, v.BitLen()/8+1)
+		v.FillBytes(bytes)
+		for i, b := range bytes {
+			bytes[i] = ^b
+		}
+	} else {
+		bytes = make([]byte, v.BitLen()/8+1)
+		v.FillBytes(bytes)
+	}
+	return CLVMAtom{bytes}
 }
 
 type CLVMPair struct {
@@ -278,8 +289,8 @@ func (iter *CLVMIter) Next() bool {
 
 	pair, ok := next.(CLVMPair)
 	if !ok {
-		fmt.Printf("%#v\n", next)
-		iter.err = NewEvalError("wrong list: item.rest is atom on index %d", iter.index).With("item", logCur).With("list", iter.root)
+		iter.err = NewEvalError("wrong list: item.rest is atom on index %d", iter.index).
+			With("item", logCur).With("list", iter.root)
 		return false
 	}
 	iter.cur = &pair
@@ -293,4 +304,40 @@ func (iter CLVMIter) Get() CLVMObject {
 
 func (iter CLVMIter) Err() *EvalError {
 	return iter.err
+}
+
+type CLVMAtomIter struct {
+	CLVMIter
+}
+
+func NewCLVMAtomIter(obj CLVMObject) *CLVMAtomIter {
+	return &CLVMAtomIter{*NewCLVMIter(obj)}
+}
+
+func (iter *CLVMAtomIter) Next() bool {
+	if !iter.CLVMIter.Next() {
+		return false
+	}
+	if _, ok := iter.cur.First.(CLVMAtom); !ok {
+		iter.err = NewEvalError("wrong atom list: item.first is not atom on index %d", iter.index).
+			With("item", iter.cur).With("list", iter.root)
+		return false
+	}
+	return true
+}
+
+func (iter CLVMAtomIter) Get() CLVMAtom {
+	return iter.cur.First.(CLVMAtom)
+}
+
+func CLVMAtomSliceFromList(obj CLVMObject) ([]CLVMAtom, error) {
+	var res []CLVMAtom
+	iter := NewCLVMAtomIter(obj)
+	for iter.Next() {
+		res = append(res, iter.Get())
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	return res, nil
 }

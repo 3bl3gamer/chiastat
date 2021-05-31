@@ -271,8 +271,6 @@ func EvalFullBlockFromDB(db *sql.DB, height uint32) error {
 	}
 	fmt.Println("ref list:", block.TransactionsGeneratorRefList)
 
-	fmt.Println(hex.EncodeToString(block.TransactionsGenerator.Bytes))
-
 	refBlocks := make([]*FullBlock, len(block.TransactionsGeneratorRefList))
 	for i, refHeight := range block.TransactionsGeneratorRefList {
 		refBlocks[i], err = FullBlockByHeight(db, refHeight)
@@ -285,8 +283,6 @@ func EvalFullBlockFromDB(db *sql.DB, height uint32) error {
 	argsEnd := &args.First
 	for _, block := range refBlocks {
 		pair := CLVMPair{CLVMAtom{block.TransactionsGenerator.Bytes}, ATOM_NULL}
-		b := [300]byte{}
-		pair = CLVMPair{CLVMAtom{b[:]}, ATOM_NULL}
 		*argsEnd = pair
 		argsEnd = &pair.Rest
 	}
@@ -297,15 +293,29 @@ func EvalFullBlockFromDB(db *sql.DB, height uint32) error {
 	}
 
 	fmt.Println("spent coins:")
-	res := result.(CLVMPair).First
-	for !res.Nullp() {
-		cur := res.(CLVMPair).First
-		spent_coin_parent_id := cur.(CLVMPair).First.(CLVMAtom).Bytes                                //bytes32
-		spent_coin_puzzle_hash := cur.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom).Bytes              //bytes32
-		spent_coin_amount := cur.(CLVMPair).Rest.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom).AsInt() //uint64
+	coinIter := NewCLVMIter(result.(CLVMPair).First)
+	for coinIter.Next() {
+		cur := coinIter.Get()
+		spent_coin_parent_id, _ := cur.(CLVMPair).First.(CLVMAtom).AsBytes32()
+		spent_coin_puzzle_hash, _ := cur.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom).AsBytes32()
+		spent_coin_amount, _ := cur.(CLVMPair).Rest.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom).AsInt64()
 		// spent_coin: Coin = Coin(spent_coin_parent_id, spent_coin_puzzle_hash, spent_coin_amount)
-		fmt.Println(hex.EncodeToString(spent_coin_parent_id), hex.EncodeToString(spent_coin_puzzle_hash), spent_coin_amount)
-		res = res.(CLVMPair).Rest
+		fmt.Println(" == coin", hex.EncodeToString(spent_coin_parent_id[:]), EncodePuzzleHash(spent_coin_puzzle_hash, "xch"), spent_coin_amount)
+
+		iter := NewCLVMIter(cur.(CLVMPair).Rest.(CLVMPair).Rest.(CLVMPair).Rest.(CLVMPair).First)
+		for iter.Next() {
+			cond := iter.Get()
+			// opcode := cond.(CLVMPair).First
+			// condList, err := CLVMAtomSliceFromList(cond.(CLVMPair).Rest)
+			// if err != nil {
+			// 	return err
+			// }
+			// fmt.Println(cond, "op", opcode, condList)
+			fmt.Println("cond:", cond)
+		}
+		if err := iter.Err(); err != nil {
+			return err
+		}
 	}
 
 	fmt.Println("done")

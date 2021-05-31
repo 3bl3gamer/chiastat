@@ -35,7 +35,7 @@ var OP_FROM_BYTE = [256]OperatorInfo{
 	0x16: {keyword: "ash", name: "ash", f: nil},
 	0x17: {keyword: "lsh", name: "lsh", f: nil},
 	// opcodes on atoms as vectors of bools 0x18-0x1c
-	0x18: {keyword: "logand", name: "logand", f: nil},
+	0x18: {keyword: "logand", name: "logand", f: opLogand},
 	0x19: {keyword: "logior", name: "logior", f: nil},
 	0x1a: {keyword: "logxor", name: "logxor", f: nil},
 	0x1b: {keyword: "lognot", name: "lognot", f: nil},

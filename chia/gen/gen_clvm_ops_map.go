@@ -69,7 +69,6 @@ func main() {
 		">":              true,
 		"ash":            true,
 		"lsh":            true,
-		"logand":         true,
 		"logior":         true,
 		"logxor":         true,
 		"lognot":         true,

@@ -243,6 +243,7 @@ func opGrBytes(args CLVMObject) (int64, CLVMObject, error) {
 	}
 	return cost, ATOM_FALSE, nil
 }
+
 func opSubstr(args CLVMObject) (int64, CLVMObject, error) {
 	argCount := args.ListLen()
 	if argCount != 2 && argCount != 3 {
@@ -283,6 +284,7 @@ func opSubstr(args CLVMObject) (int64, CLVMObject, error) {
 	cost := int64(1)
 	return cost, CLVMAtom{s}, nil
 }
+
 func opConcat(args CLVMObject) (int64, CLVMObject, error) {
 	cost := int64(CONCAT_BASE_COST)
 	s := []byte{}
@@ -303,6 +305,38 @@ func opConcat(args CLVMObject) (int64, CLVMObject, error) {
 	cost += int64(len(s)) * CONCAT_COST_PER_BYTE
 	cost, res := mallocCost(cost, CLVMAtom{s})
 	return cost, res, nil
+}
+
+func binopReduction(opName string, initialValue *big.Int, args CLVMObject, opFunc func(a, b *big.Int) *big.Int) (int64, CLVMObject, error) {
+	total := initialValue
+	argSize := 0
+	cost := int64(LOG_BASE_COST)
+
+	argIter := NewCLVMIter(args)
+	for argIter.Next() {
+		item := argIter.Get()
+		if atom, ok := item.(CLVMAtom); ok {
+			total = opFunc(total, atom.AsInt())
+			argSize += len(atom.Bytes)
+			cost += LOG_COST_PER_ARG
+		} else {
+			return cost, nil, NewEvalError("%s on list", opName).With("arg", item)
+		}
+	}
+	if err := argIter.Err(); err != nil {
+		return cost, nil, err
+	}
+
+	cost += int64(argSize) * LOG_COST_PER_BYTE
+	cost, res := mallocCost(cost, CLVMAtomFromInt(total))
+	return cost, res, nil
+}
+
+func opLogand(args CLVMObject) (int64, CLVMObject, error) {
+	binop := func(a, b *big.Int) *big.Int {
+		return a.And(a, b)
+	}
+	return binopReduction("logand", new(big.Int).SetInt64(-1), args, binop)
 }
 
 // https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/wallet/puzzles/rom_bootstrap_generator.clvm

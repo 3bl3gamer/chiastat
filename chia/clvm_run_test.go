@@ -1702,7 +1702,6 @@ func TestRunProgram(t *testing.T) {
 			strings.HasPrefix(test.name, "div-") ||
 			strings.HasPrefix(test.name, "divmod-") ||
 			strings.HasPrefix(test.name, "greater-") ||
-			strings.HasPrefix(test.name, "logand-") ||
 			strings.HasPrefix(test.name, "logior-") ||
 			strings.HasPrefix(test.name, "lognot-") ||
 			strings.HasPrefix(test.name, "logxor-") ||
