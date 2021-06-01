@@ -1,4 +1,4 @@
-package chia
+package clvm
 
 import (
 	"encoding/hex"
@@ -1687,7 +1687,7 @@ var tests = []struct {
 
 // https://github.com/Chia-Network/clvm_tools/blob/main/clvm_tools/cmds.py#L107
 func calculateCostOffset() int64 {
-	cost, _, err := RunProgram(ATOM_NULL, ATOM_NULL)
+	cost, _, err := RunProgram(NULL, NULL)
 	if err != nil {
 		panic(err)
 	}
@@ -1718,7 +1718,7 @@ func TestRunProgram(t *testing.T) {
 			continue
 		}
 
-		cmd, args, err := CLVMOneOrTwoFromIRString(test.cmd)
+		cmd, args, err := SExpOneOrTwoFromIRString(test.cmd)
 		if err != nil {
 			t.Fatalf("RunProgram %s: %s", test.name, err)
 		}
@@ -1728,7 +1728,7 @@ func TestRunProgram(t *testing.T) {
 			if test.dump {
 				resStr = hex.EncodeToString(res.Dump())
 			} else {
-				resStr = res.StringExt(CLVMStringExtCfg{Keywords: !test.noKeywords, OnlyHexValues: false, CompactLists: true, Nil: "()"})
+				resStr = res.StringExt(StringExtCfg{Keywords: !test.noKeywords, OnlyHexValues: false, CompactLists: true, Nil: "()"})
 			}
 		} else {
 			resStr = "FAIL: " + err.Error()

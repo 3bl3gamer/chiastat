@@ -1,6 +1,8 @@
 package chia
 
 import (
+	"chiastat/chia/clvm"
+	"chiastat/chia/utils"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -59,15 +61,15 @@ func BenchmarkFullBlockFromBytes(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	buf := NewParseBuf(bytes)
+	buf := utils.NewParseBuf(bytes)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buf.pos = 0
+		buf.SeekSet(0)
 		FullBlockFromBytes(buf)
 	}
-	buf.ensureEmpty()
-	if buf.err != nil {
-		b.Fatal(buf.err)
+	buf.EnsureEmpty()
+	if buf.Err() != nil {
+		b.Fatal(buf.Err())
 	}
 }
 
@@ -357,11 +359,11 @@ func BenchmarkDumpTo(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	buf := NewParseBuf(bytes)
+	buf := utils.NewParseBuf(bytes)
 	prog := SerializedProgramFromBytes(buf)
-	buf.ensureEmpty()
-	if buf.err != nil {
-		b.Fatal(buf.err)
+	buf.EnsureEmpty()
+	if buf.Err() != nil {
+		b.Fatal(buf.Err())
 	}
 	var outBuf []byte
 	b.ResetTimer()
@@ -372,12 +374,12 @@ func BenchmarkDumpTo(b *testing.B) {
 }
 
 func BenchmarkAdd(b *testing.B) {
-	prog, err := CLVMFromIRString("(+ 1 2 3 4 5 6 7 8 9 0)")
+	prog, err := clvm.SExpFromIRString("(+ 1 2 3 4 5 6 7 8 9 0)")
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		RunProgram(prog, ATOM_NULL)
+		clvm.RunProgram(prog, clvm.NULL)
 	}
 }

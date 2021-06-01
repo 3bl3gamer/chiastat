@@ -1,4 +1,4 @@
-package chia
+package clvm
 
 import (
 	"bytes"
@@ -6,21 +6,21 @@ import (
 	"math/big"
 )
 
-var ATOM_NULL = CLVMAtom{[]byte{}}
-var ATOM_FALSE = ATOM_NULL
-var ATOM_TRUE = CLVMAtom{[]byte{0x01}}
+var NULL = Atom{[]byte{}}
+var FALSE = NULL
+var TRUE = Atom{[]byte{0x01}}
 
-type CLVMObject interface {
+type SExp interface {
 	Nullp() bool
 	Listp() bool
 	ListLen() int
 	String() string
-	StringExt(CLVMStringExtCfg) string
+	StringExt(StringExtCfg) string
 	DumpTo(*[]byte)
 	Dump() []byte
 }
 
-type CLVMStringExtCfg struct {
+type StringExtCfg struct {
 	Keywords      bool
 	OnlyHexValues bool
 	CompactLists  bool
@@ -29,32 +29,32 @@ type CLVMStringExtCfg struct {
 	isNotRoot     bool
 }
 
-func (cfg CLVMStringExtCfg) KeywordsAnd(val bool) CLVMStringExtCfg {
+func (cfg StringExtCfg) KeywordsAnd(val bool) StringExtCfg {
 	res := cfg
 	res.Keywords = res.Keywords && val
 	return res
 }
 
-var CLVM_STRING_EXT_CFG_DEFAULT = CLVMStringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil"}
-var CLVM_STRING_EXT_CFG_ERRORS = CLVMStringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil", MaxDepth: 4}
+var STRING_EXT_CFG_DEFAULT = StringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil"}
+var STRING_EXT_CFG_ERRORS = StringExtCfg{Keywords: true, OnlyHexValues: false, CompactLists: true, Nil: "nil", MaxDepth: 4}
 
-type CLVMAtom struct {
+type Atom struct {
 	Bytes []byte
 }
 
-func (a CLVMAtom) Nullp() bool {
+func (a Atom) Nullp() bool {
 	return len(a.Bytes) == 0
 }
 
-func (a CLVMAtom) Listp() bool {
+func (a Atom) Listp() bool {
 	return false
 }
 
-func (a CLVMAtom) ListLen() int {
+func (a Atom) ListLen() int {
 	return 0
 }
 
-func (a CLVMAtom) AsInt() *big.Int {
+func (a Atom) AsInt() *big.Int {
 	if len(a.Bytes) > 0 && a.Bytes[0]&0x80 != 0 {
 		buf := make([]byte, len(a.Bytes))
 		for i, b := range a.Bytes {
@@ -68,11 +68,11 @@ func (a CLVMAtom) AsInt() *big.Int {
 	}
 }
 
-func (a CLVMAtom) Equal(other CLVMAtom) bool {
+func (a Atom) Equal(other Atom) bool {
 	return bytes.Equal(a.Bytes, other.Bytes)
 }
 
-func (a CLVMAtom) AsInt32() (int32, *EvalError) {
+func (a Atom) AsInt32() (int32, *EvalError) {
 	l := len(a.Bytes)
 	if l > 4 {
 		return 0, NewEvalError("int32 requires 4 bytes at most, got %d: 0x%s",
@@ -97,7 +97,7 @@ func (a CLVMAtom) AsInt32() (int32, *EvalError) {
 	return int32(v), nil
 }
 
-func (a CLVMAtom) AsInt64() (int64, *EvalError) {
+func (a Atom) AsInt64() (int64, *EvalError) {
 	l := len(a.Bytes)
 	if l > 8 {
 		return 0, NewEvalError("int64 requires 8 bytes at most, got %d: 0x%s",
@@ -113,7 +113,7 @@ func (a CLVMAtom) AsInt64() (int64, *EvalError) {
 	return int64(v), nil
 }
 
-func (a CLVMAtom) AsBytes32() ([32]byte, *EvalError) {
+func (a Atom) AsBytes32() ([32]byte, *EvalError) {
 	if len(a.Bytes) != 32 {
 		return [32]byte{}, NewEvalError("expected 32 bytes, got %d: 0x%s",
 			len(a.Bytes), hex.EncodeToString(a.Bytes)).With("atom", a)
@@ -123,7 +123,7 @@ func (a CLVMAtom) AsBytes32() ([32]byte, *EvalError) {
 	return res, nil
 }
 
-func (a CLVMAtom) StringExt(cfg CLVMStringExtCfg) string {
+func (a Atom) StringExt(cfg StringExtCfg) string {
 	if len(a.Bytes) == 0 {
 		return cfg.Nil
 	}
@@ -155,23 +155,23 @@ func (a CLVMAtom) StringExt(cfg CLVMStringExtCfg) string {
 	}
 }
 
-func (a CLVMAtom) String() string {
-	return a.StringExt(CLVM_STRING_EXT_CFG_DEFAULT)
+func (a Atom) String() string {
+	return a.StringExt(STRING_EXT_CFG_DEFAULT)
 }
 
-func (a CLVMAtom) DumpTo(buf *[]byte) {
+func (a Atom) DumpTo(buf *[]byte) {
 	SerializeAtomBytes(buf, a.Bytes)
 }
 
-func (a CLVMAtom) Dump() []byte {
+func (a Atom) Dump() []byte {
 	var buf []byte
 	a.DumpTo(&buf)
 	return buf
 }
 
-func CLVMAtomFromInt(v *big.Int) CLVMAtom {
+func AtomFromInt(v *big.Int) Atom {
 	if v.Sign() == 0 {
-		return ATOM_NULL
+		return NULL
 	}
 	var bytes []byte
 	if v.Sign() < 0 {
@@ -185,25 +185,25 @@ func CLVMAtomFromInt(v *big.Int) CLVMAtom {
 		bytes = make([]byte, v.BitLen()/8+1)
 		v.FillBytes(bytes)
 	}
-	return CLVMAtom{bytes}
+	return Atom{bytes}
 }
 
-type CLVMPair struct {
-	First CLVMObject
-	Rest  CLVMObject
+type Pair struct {
+	First SExp
+	Rest  SExp
 }
 
-func (a CLVMPair) Nullp() bool {
+func (a Pair) Nullp() bool {
 	return false
 }
-func (a CLVMPair) Listp() bool {
+func (a Pair) Listp() bool {
 	return true
 }
-func (a CLVMPair) ListLen() int {
-	var item CLVMObject = a
+func (a Pair) ListLen() int {
+	var item SExp = a
 	size := 0
 	for {
-		if pair, ok := item.(CLVMPair); ok {
+		if pair, ok := item.(Pair); ok {
 			item = pair.Rest
 		} else {
 			break
@@ -212,7 +212,7 @@ func (a CLVMPair) ListLen() int {
 	}
 	return size
 }
-func (a CLVMPair) StringExt(cfg CLVMStringExtCfg) string {
+func (a Pair) StringExt(cfg StringExtCfg) string {
 	if cfg.MaxDepth < 0 {
 		return "..."
 	}
@@ -228,8 +228,8 @@ func (a CLVMPair) StringExt(cfg CLVMStringExtCfg) string {
 		res := "(" + leftStr
 		cur := a.Rest
 		for !cur.Nullp() {
-			if pair, ok := cur.(CLVMPair); ok {
-				_, isAtom := pair.First.(CLVMAtom)
+			if pair, ok := cur.(Pair); ok {
+				_, isAtom := pair.First.(Atom)
 				res += " " + pair.First.StringExt(cfg.KeywordsAnd(!isAtom))
 				cur = pair.Rest
 			} else {
@@ -239,42 +239,42 @@ func (a CLVMPair) StringExt(cfg CLVMStringExtCfg) string {
 		}
 		return res + ")"
 	}
-	_, rightIsAtom := a.Rest.(CLVMAtom)
+	_, rightIsAtom := a.Rest.(Atom)
 	rightStr := a.Rest.StringExt(cfg.KeywordsAnd(!rightIsAtom))
 	return "(" + leftStr + " . " + rightStr + ")"
 }
-func (a CLVMPair) String() string {
-	return a.StringExt(CLVM_STRING_EXT_CFG_DEFAULT)
+func (a Pair) String() string {
+	return a.StringExt(STRING_EXT_CFG_DEFAULT)
 }
-func (a CLVMPair) DumpTo(buf *[]byte) {
+func (a Pair) DumpTo(buf *[]byte) {
 	*buf = append(*buf, CONS_BOX_MARKER)
 	a.First.DumpTo(buf)
 	a.Rest.DumpTo(buf)
 }
-func (a CLVMPair) Dump() []byte {
+func (a Pair) Dump() []byte {
 	var buf []byte
 	a.DumpTo(&buf)
 	return buf
 }
 
-type CLVMIter struct {
-	root  CLVMObject
-	cur   *CLVMPair
+type Iter struct {
+	root  SExp
+	cur   *Pair
 	index int
 	err   *EvalError
 }
 
-func NewCLVMIter(obj CLVMObject) *CLVMIter {
-	return &CLVMIter{root: obj, index: -1}
+func NewIter(obj SExp) *Iter {
+	return &Iter{root: obj, index: -1}
 }
 
-func (iter *CLVMIter) Next() bool {
+func (iter *Iter) Next() bool {
 	if iter.err != nil {
 		return false
 	}
 
-	var next CLVMObject
-	var logCur CLVMObject
+	var next SExp
+	var logCur SExp
 	if iter.cur == nil {
 		next = iter.root
 		logCur = iter.root
@@ -287,7 +287,7 @@ func (iter *CLVMIter) Next() bool {
 		return false
 	}
 
-	pair, ok := next.(CLVMPair)
+	pair, ok := next.(Pair)
 	if !ok {
 		iter.err = NewEvalError("wrong list: item.rest is atom on index %d", iter.index).
 			With("item", logCur).With("list", iter.root)
@@ -298,27 +298,27 @@ func (iter *CLVMIter) Next() bool {
 	return true
 }
 
-func (iter CLVMIter) Get() CLVMObject {
+func (iter Iter) Get() SExp {
 	return iter.cur.First
 }
 
-func (iter CLVMIter) Err() *EvalError {
+func (iter Iter) Err() *EvalError {
 	return iter.err
 }
 
-type CLVMAtomIter struct {
-	CLVMIter
+type AtomIter struct {
+	Iter
 }
 
-func NewCLVMAtomIter(obj CLVMObject) *CLVMAtomIter {
-	return &CLVMAtomIter{*NewCLVMIter(obj)}
+func NewAtomIter(obj SExp) *AtomIter {
+	return &AtomIter{*NewIter(obj)}
 }
 
-func (iter *CLVMAtomIter) Next() bool {
-	if !iter.CLVMIter.Next() {
+func (iter *AtomIter) Next() bool {
+	if !iter.Iter.Next() {
 		return false
 	}
-	if _, ok := iter.cur.First.(CLVMAtom); !ok {
+	if _, ok := iter.cur.First.(Atom); !ok {
 		iter.err = NewEvalError("wrong atom list: item.first is not atom on index %d", iter.index).
 			With("item", iter.cur).With("list", iter.root)
 		return false
@@ -326,13 +326,13 @@ func (iter *CLVMAtomIter) Next() bool {
 	return true
 }
 
-func (iter CLVMAtomIter) Get() CLVMAtom {
-	return iter.cur.First.(CLVMAtom)
+func (iter AtomIter) Get() Atom {
+	return iter.cur.First.(Atom)
 }
 
-func CLVMAtomSliceFromList(obj CLVMObject) ([]CLVMAtom, error) {
-	var res []CLVMAtom
-	iter := NewCLVMAtomIter(obj)
+func AtomSliceFromList(obj SExp) ([]Atom, error) {
+	var res []Atom
+	iter := NewAtomIter(obj)
 	for iter.Next() {
 		res = append(res, iter.Get())
 	}

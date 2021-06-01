@@ -1,4 +1,4 @@
-package chia
+package clvm
 
 import (
 	"encoding/hex"
@@ -8,15 +8,15 @@ import (
 	"testing"
 )
 
-func TestCLVMAtomFromInt(t *testing.T) {
+func TestAtomFromInt(t *testing.T) {
 	testOk := func(numStr string, bufHex string) {
 		v, ok := new(big.Int).SetString(numStr, 10)
 		if !ok {
 			log.Fatalf("wrong int: %s", numStr)
 		}
-		resHex := hex.EncodeToString(CLVMAtomFromInt(v).Bytes)
+		resHex := hex.EncodeToString(AtomFromInt(v).Bytes)
 		if resHex != bufHex {
-			t.Errorf("CLVMAtomFromInt(%s) = %s, expected %s", numStr, resHex, bufHex)
+			t.Errorf("AtomFromInt(%s) = %s, expected %s", numStr, resHex, bufHex)
 		}
 	}
 	testOk("0", "")
@@ -40,20 +40,20 @@ func TestCLVMAtomFromInt(t *testing.T) {
 	testOk("-32769", "ff7fff")
 }
 
-func TestCLVMAtomAsInt(t *testing.T) {
+func TestAtomAsInt(t *testing.T) {
 	test := func(bufHex string, numStr string, bitLen int) {
 		buf, err := hex.DecodeString(bufHex)
 		if err != nil {
 			log.Fatalf("wrong hex: %s", err)
 		}
-		atom := CLVMAtom{buf}
+		atom := Atom{buf}
 		resStr := atom.AsInt().String()
 		if resStr != numStr {
-			t.Errorf("CLVMAtom{%s}.AsInt() = %s, expected %s", bufHex, resStr, numStr)
+			t.Errorf("Atom{%s}.AsInt() = %s, expected %s", bufHex, resStr, numStr)
 		}
 		resBitLen := atom.AsInt().BitLen()
 		if bitLen >= 0 && resBitLen != bitLen {
-			t.Errorf("CLVMAtom{%s}.AsInt().BitLen() = %d, expected %d", bufHex, resBitLen, bitLen)
+			t.Errorf("Atom{%s}.AsInt().BitLen() = %d, expected %d", bufHex, resBitLen, bitLen)
 		}
 	}
 	test("", "0", 0)
@@ -77,13 +77,13 @@ func TestCLVMAtomAsInt(t *testing.T) {
 	test("ff7fff", "-32769", 16)
 }
 
-func TestCLVMAtomAsInt32(t *testing.T) {
+func TestAtomAsInt32(t *testing.T) {
 	test := func(bufHex string, numStr string) {
 		buf, err := hex.DecodeString(bufHex)
 		if err != nil {
 			log.Fatalf("wrong hex: %s", err)
 		}
-		atom := CLVMAtom{buf}
+		atom := Atom{buf}
 		resVal, resErr := atom.AsInt32()
 		var resStr string
 		if resErr == nil {
@@ -92,7 +92,7 @@ func TestCLVMAtomAsInt32(t *testing.T) {
 			resStr = "FAIL: " + resErr.Error()
 		}
 		if resStr != numStr {
-			t.Errorf("CLVMAtom{%s}.AsInt32() = %s, expected %s", bufHex, resStr, numStr)
+			t.Errorf("Atom{%s}.AsInt32() = %s, expected %s", bufHex, resStr, numStr)
 		}
 	}
 	test("", "0")
@@ -120,13 +120,13 @@ func TestCLVMAtomAsInt32(t *testing.T) {
 	test("01ffeeddcc", "FAIL: int32 requires 4 bytes at most, got 5: 0x01ffeeddcc: atom=0x01ffeeddcc")
 }
 
-func TestCLVMAtomAsInt64(t *testing.T) {
+func TestAtomAsInt64(t *testing.T) {
 	test := func(bufHex string, numStr string) {
 		buf, err := hex.DecodeString(bufHex)
 		if err != nil {
 			log.Fatalf("wrong hex: %s", err)
 		}
-		atom := CLVMAtom{buf}
+		atom := Atom{buf}
 		resVal, resErr := atom.AsInt64()
 		var resStr string
 		if resErr == nil {
@@ -135,7 +135,7 @@ func TestCLVMAtomAsInt64(t *testing.T) {
 			resStr = "FAIL: " + resErr.Error()
 		}
 		if resStr != numStr {
-			t.Errorf("CLVMAtom{%s}.AsInt64() = %s, expected %s", bufHex, resStr, numStr)
+			t.Errorf("Atom{%s}.AsInt64() = %s, expected %s", bufHex, resStr, numStr)
 		}
 	}
 	test("", "0")
@@ -167,15 +167,15 @@ func TestCLVMAtomAsInt64(t *testing.T) {
 	test("01ffeeddccbbaa9988", "FAIL: int64 requires 8 bytes at most, got 9: 0x01ffeeddccbbaa9988: atom=0x01ffeeddccbbaa9988")
 }
 
-func TestCLVMFromIRString(t *testing.T) {
+func TestFromIRString(t *testing.T) {
 	testOk := func(ir string, dest string) {
-		res, err := CLVMFromIRString(ir)
+		res, err := SExpFromIRString(ir)
 		if err != nil {
-			t.Errorf("CLVMFromIRString '%s' failed: %s", ir, err)
+			t.Errorf("FromIRString '%s' failed: %s", ir, err)
 		}
-		resStr := res.StringExt(CLVMStringExtCfg{Keywords: true, OnlyHexValues: true, CompactLists: false, Nil: "nil"})
+		resStr := res.StringExt(StringExtCfg{Keywords: true, OnlyHexValues: true, CompactLists: false, Nil: "nil"})
 		if resStr != dest {
-			t.Errorf("CLVMFromIRString '%s' result: %s != %s", ir, resStr, dest)
+			t.Errorf("FromIRString '%s' result: %s != %s", ir, resStr, dest)
 		}
 	}
 	testOk("0", "nil")

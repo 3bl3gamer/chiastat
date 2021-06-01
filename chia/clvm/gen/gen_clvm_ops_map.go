@@ -122,13 +122,13 @@ func main() {
 	}
 
 	write("// Generated with `go genetare`. Do not edit.\n")
-	write("package chia\n\n")
+	write("package clvm\n\n")
 
 	write(`type OperatorInfo struct {
 	keyword string
 	name string
-	atom CLVMAtom
-	f func(CLVMObject) (int64, CLVMObject, error)
+	atom Atom
+	f func(SExp) (int64, SExp, error)
 }
 `)
 
@@ -155,12 +155,12 @@ func main() {
 
 	for _, keyword := range keywords {
 		if _, ok := kwAsConstAtom[keyword.kw]; ok {
-			write("var %s = CLVMAtom{[]byte{0x%02x}}\n", atomConstName(keyword.name), keyword.code)
+			write("var %s = Atom{[]byte{0x%02x}}\n", atomConstName(keyword.name), keyword.code)
 		}
 	}
 	write("\n")
 
-	write("var ATOM_FROM_OP_KEYWORD = map[string]CLVMAtom {\n")
+	write("var ATOM_FROM_OP_KEYWORD = map[string]Atom {\n")
 	for _, keyword := range keywords {
 		if keyword.kw != "." {
 			if _, ok := kwAsConstAtom[keyword.kw]; ok {

@@ -1,4 +1,4 @@
-package chia
+package clvm
 
 import "log"
 

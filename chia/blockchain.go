@@ -1,7 +1,10 @@
 package chia
 
 import (
+	"chiastat/chia/clvm"
+	"chiastat/chia/utils"
 	"database/sql"
+	_ "embed"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -24,11 +27,11 @@ func BlockRecordFromRow(rows Scanner) (*BlockRecord, error) {
 	if err != nil {
 		return nil, merry.Wrap(err)
 	}
-	buf := NewParseBuf(blockBytes)
+	buf := utils.NewParseBuf(blockBytes)
 	br := BlockRecordFromBytes(buf)
-	buf.ensureEmpty()
-	if buf.err != nil {
-		return nil, buf.err
+	buf.EnsureEmpty()
+	if buf.Err() != nil {
+		return nil, buf.Err()
 	}
 	return &br, nil
 }
@@ -43,11 +46,11 @@ func FullBlockFromRow(row Scanner) (*FullBlock, error) {
 	if err := row.Scan(&blockBytes); err != nil {
 		return nil, merry.Wrap(err)
 	}
-	buf := NewParseBuf(blockBytes)
+	buf := utils.NewParseBuf(blockBytes)
 	block := FullBlockFromBytes(buf)
-	buf.ensureEmpty()
-	if buf.err != nil {
-		return nil, merry.Wrap(buf.err)
+	buf.EnsureEmpty()
+	if buf.Err() != nil {
+		return nil, buf.Err()
 	}
 	return &block, nil
 }
@@ -257,6 +260,12 @@ func PrintNetworkSpaceChartFromDB(db *sql.DB) error {
 	return nil
 }
 
+// https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/wallet/puzzles/rom_bootstrap_generator.clvm
+// https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/wallet/puzzles/rom_bootstrap_generator.clvm.hex
+//go:embed rom_bootstrap_generator.clvm.hex
+var ROM_BOOTSTRAP_GENERATOR_HEX string
+var ROM_BOOTSTRAP_GENERATOR = clvm.MustSExpFromHex(ROM_BOOTSTRAP_GENERATOR_HEX)
+
 func EvalFullBlockFromDB(db *sql.DB, height uint32) error {
 	// 225698 first with transaction generator
 	// 271489
@@ -279,34 +288,34 @@ func EvalFullBlockFromDB(db *sql.DB, height uint32) error {
 		}
 	}
 
-	var args CLVMPair = CLVMPair{ATOM_NULL, ATOM_NULL}
+	var args clvm.Pair = clvm.Pair{clvm.NULL, clvm.NULL}
 	argsEnd := &args.First
 	for _, block := range refBlocks {
-		pair := CLVMPair{CLVMAtom{block.TransactionsGenerator.Bytes}, ATOM_NULL}
+		pair := clvm.Pair{clvm.Atom{block.TransactionsGenerator.Bytes}, clvm.NULL}
 		*argsEnd = pair
 		argsEnd = &pair.Rest
 	}
-	args = CLVMPair{block.TransactionsGenerator.Root, CLVMPair{args, ATOM_NULL}}
-	_, result, err := RunProgram(ROM_BOOTSTRAP_GENERATOR.Root, args)
+	args = clvm.Pair{block.TransactionsGenerator.Root, clvm.Pair{args, clvm.NULL}}
+	_, result, err := clvm.RunProgram(ROM_BOOTSTRAP_GENERATOR, args)
 	if err != nil {
 		return merry.Wrap(err)
 	}
 
 	fmt.Println("spent coins:")
-	coinIter := NewCLVMIter(result.(CLVMPair).First)
+	coinIter := clvm.NewIter(result.(clvm.Pair).First)
 	for coinIter.Next() {
 		cur := coinIter.Get()
-		spent_coin_parent_id, _ := cur.(CLVMPair).First.(CLVMAtom).AsBytes32()
-		spent_coin_puzzle_hash, _ := cur.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom).AsBytes32()
-		spent_coin_amount, _ := cur.(CLVMPair).Rest.(CLVMPair).Rest.(CLVMPair).First.(CLVMAtom).AsInt64()
+		spent_coin_parent_id, _ := cur.(clvm.Pair).First.(clvm.Atom).AsBytes32()
+		spent_coin_puzzle_hash, _ := cur.(clvm.Pair).Rest.(clvm.Pair).First.(clvm.Atom).AsBytes32()
+		spent_coin_amount, _ := cur.(clvm.Pair).Rest.(clvm.Pair).Rest.(clvm.Pair).First.(clvm.Atom).AsInt64()
 		// spent_coin: Coin = Coin(spent_coin_parent_id, spent_coin_puzzle_hash, spent_coin_amount)
 		fmt.Println(" == coin", hex.EncodeToString(spent_coin_parent_id[:]), EncodePuzzleHash(spent_coin_puzzle_hash, "xch"), spent_coin_amount)
 
-		iter := NewCLVMIter(cur.(CLVMPair).Rest.(CLVMPair).Rest.(CLVMPair).Rest.(CLVMPair).First)
+		iter := clvm.NewIter(cur.(clvm.Pair).Rest.(clvm.Pair).Rest.(clvm.Pair).Rest.(clvm.Pair).First)
 		for iter.Next() {
 			cond := iter.Get()
-			// opcode := cond.(CLVMPair).First
-			// condList, err := CLVMAtomSliceFromList(cond.(CLVMPair).Rest)
+			// opcode := cond.(clvm.Pair).First
+			// condList, err := clvm.AtomSliceFromList(cond.(clvm.Pair).Rest)
 			// if err != nil {
 			// 	return err
 			// }

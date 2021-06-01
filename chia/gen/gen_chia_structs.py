@@ -7,7 +7,7 @@ from textwrap import dedent
 
 
 DEBUG = False
-workdir = os.path.dirname(os.path.realpath(__file__))
+workdir = os.path.dirname(os.path.realpath(__file__)) + "/.."
 
 def cap_first(string):
     if len(string) == 0:
@@ -63,6 +63,17 @@ def make_type_def(ann_items):
         raise ValueError(f'unexpected type {t} in {ann_items}')
     return get_next_def() + make_type_def(ann_items[1:])
 
+buf_func_names = {
+    'Bool',
+    'Uint8',
+    'Uint32',
+    'Uint64',
+    'Uint128',
+    'Bytes32',
+    'Bytes100',
+    'Bytes',
+}
+
 build_in_parse_funcs = {
     'BoolFromBytes',
     'Uint8FromBytes',
@@ -74,16 +85,22 @@ build_in_parse_funcs = {
     'BytesFromBytes',
 }
 
+def make_func_name(ann_items):
+    base = ''.join([cap_first(x) for x in ann_items])
+    if base in buf_func_names:
+        return 'buf.' + base
+    return base + 'FromBytes'
+
 def make_type_parse(name, ann_items, need_err_check=False):
-    func_name = ''.join([cap_first(x) for x in ann_items]) + 'FromBytes'
+    func_name = make_func_name(ann_items)
     res = ''
-    if func_name in build_in_parse_funcs:
-        res += f'{name} = {func_name}(buf)\n'
+    if func_name.startswith('buf.'):
+        res += f'{name} = {func_name}()\n'
     elif len(ann_items) == 1 and is_class_type_name(ann_items[0]):
         res += f'{name} = {func_name}(buf)\n'
     elif ann_items[0] == 'Optional':
         inner_type_def = make_type_def(ann_items[1:])
-        res += f'if flag := BoolFromBytes(buf); buf.err == nil && flag {{ \n'
+        res += f'if flag := buf.Bool(); buf.Err() == nil && flag {{ \n'
         if is_class_type_name(ann_items[1]):
             res += f'{make_type_parse("var t", ann_items[1:])}'
             res += f'{name} = &t\n'
@@ -93,15 +110,15 @@ def make_type_parse(name, ann_items, need_err_check=False):
     elif ann_items[0] == 'List':
         inner_type_def = make_type_def(ann_items[1:])
         len_name = 'len_' + name.replace('.', '_')
-        res += f'{len_name} := Uint32FromBytes(buf)\n'
+        res += f'{len_name} := buf.Uint32()\n'
         if DEBUG:
             res += f'fmt.Println("len", {len_name})\n'
         res += f'{name} = make([]{inner_type_def}, {len_name})\n'
         res += f'for i:=uint32(0);i<{len_name};i++ {{ {make_type_parse(f"{name}[i]", ann_items[1:], need_err_check=True)} }}\n'
     if DEBUG:
-        res += f'fmt.Println("{name}", "{make_type_def(ann_items)}", {name}, buf.pos, buf.err)\n'
+        res += f'fmt.Println("{name}", "{make_type_def(ann_items)}", {name}, buf.Pos(), buf.Err())\n'
     if need_err_check:
-        res += f'if buf.err != nil {{ return }}\n'
+        res += f'if buf.Err() != nil {{ return }}\n'
     return res
 
 def make_struct_def(modules, struct_name):
@@ -141,7 +158,7 @@ def make_struct_def(modules, struct_name):
         def_text += to_pascal_case(name) + ' ' + make_type_def(ann_items) + '\n'
     def_text += '}\n'
 
-    parse_text = f'func {struct_name}FromBytes(buf *ParseBuf) (obj {struct_name}) {{\n'
+    parse_text = f'func {struct_name}FromBytes(buf *utils.ParseBuf) (obj {struct_name}) {{\n'
     for (name, ann_items, attr_docstring) in attrs:
         parse_text += make_type_parse('obj.' + to_pascal_case(name), ann_items)
     parse_text += f'return\n'
@@ -173,7 +190,7 @@ for url in source_urls:
 out_fname = workdir + '/structs_generated.go'
 
 with open(out_fname, 'w') as f:
-    imports = ["math/big"]
+    imports = ["math/big", "chiastat/chia/utils"]
     if DEBUG:
         imports.append("fmt")
     f.write('package chia\n\n')
@@ -187,8 +204,8 @@ with open(out_fname, 'w') as f:
     ]))
     for dummy_name, dummy_size in [('G1Element', 48), ('G2Element', 96)]:
         f.write(f'\n\ntype {dummy_name} struct {{Bytes []byte}}')
-        f.write(f'\nfunc {dummy_name}FromBytes(buf *ParseBuf) (obj {dummy_name}) {{')
-        f.write(f'\nobj.Bytes = BytesNFromBytes(buf, {dummy_size}); return')
+        f.write(f'\nfunc {dummy_name}FromBytes(buf *utils.ParseBuf) (obj {dummy_name}) {{')
+        f.write(f'\nobj.Bytes = buf.BytesN({dummy_size}); return')
         f.write(f'\n}}')
 
 os.system('go fmt ' + out_fname)

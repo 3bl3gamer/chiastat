@@ -1,4 +1,4 @@
-package chia
+package clvm
 
 const IF_COST = 33
 const CONS_COST = 50

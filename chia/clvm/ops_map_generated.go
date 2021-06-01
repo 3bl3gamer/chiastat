@@ -1,11 +1,11 @@
 // Generated with `go genetare`. Do not edit.
-package chia
+package clvm
 
 type OperatorInfo struct {
 	keyword string
 	name    string
-	atom    CLVMAtom
-	f       func(CLVMObject) (int64, CLVMObject, error)
+	atom    Atom
+	f       func(SExp) (int64, SExp, error)
 }
 
 var OP_FROM_BYTE = [256]OperatorInfo{
@@ -50,10 +50,10 @@ var OP_FROM_BYTE = [256]OperatorInfo{
 	0x24: {keyword: "softfork", name: "softfork", f: nil},
 }
 
-var ATOM_QUOTE = CLVMAtom{[]byte{0x01}}
-var ATOM_APPLY = CLVMAtom{[]byte{0x02}}
+var ATOM_QUOTE = Atom{[]byte{0x01}}
+var ATOM_APPLY = Atom{[]byte{0x02}}
 
-var ATOM_FROM_OP_KEYWORD = map[string]CLVMAtom{
+var ATOM_FROM_OP_KEYWORD = map[string]Atom{
 	"q":              ATOM_QUOTE,
 	"a":              ATOM_APPLY,
 	"i":              {[]byte{0x03}},
