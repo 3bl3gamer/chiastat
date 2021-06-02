@@ -100,21 +100,21 @@ var tests = []struct {
 		out:  `7`,
 		cost: 220,
 	},
-	// {
-	// 	name: "apply-03",
-	// 	cmd:  `(a)`,
-	// 	out:  `FAIL: apply requires exactly 2 parameters ()`,
-	// },
-	// {
-	// 	name: "apply-04",
-	// 	cmd:  `(a (q . +))`,
-	// 	out:  `FAIL: apply requires exactly 2 parameters (+)`,
-	// },
-	// {
-	// 	name: "apply-05",
-	// 	cmd:  `(a (q . +) (q . (1 2 3)) (q . foo))`,
-	// 	out:  `FAIL: apply requires exactly 2 parameters (+ (q 2 3) "foo")`,
-	// },
+	{
+		name: "apply-03",
+		cmd:  `(a)`,
+		out:  `FAIL: apply requires exactly 2 parameters, got 1: args=nil`,
+	},
+	{
+		name: "apply-04",
+		cmd:  `(a (q . +))`,
+		out:  `FAIL: apply requires exactly 2 parameters, got 1: args=(+)`,
+	},
+	{
+		name: "apply-05",
+		cmd:  `(a (q . +) (q . (1 2 3)) (q . foo))`,
+		out:  `FAIL: apply requires exactly 2 parameters, got 3: args=(+ (q 2 3) "foo")`,
+	},
 	{
 		name: "apply-06",
 		cmd:  `(a (q . (+ 2 5)) (q . (20 30)))`,
@@ -887,11 +887,6 @@ var tests = []struct {
 		out:  `200`,
 		cost: 361,
 	},
-	// {
-	// 	name: "illegal-dot-expression",
-	// 	cmd:  `(q . . 0 1)`,
-	// 	out:  `FAIL: illegal dot expression at 3`,
-	// },
 	{
 		name: "int-0",
 		cmd:  `(q . 127)`,
@@ -1378,44 +1373,24 @@ var tests = []struct {
 		out:  `()`,
 		cost: 29,
 	},
-	// {
-	// 	name: "quote-2",
-	// 	cmd:  `(q . 0 1)`,
-	// 	out:  `FAIL: illegal dot expression at 3`,
-	// },
 	{
 		name: "quote-3",
 		cmd:  `(q . 0)`,
 		out:  `()`,
 		cost: 29,
 	},
-	// {
-	// 	name: "quote-4",
-	// 	cmd:  `(q . (0 1 (f (a)) (q . 15 20)))`,
-	// 	out:  `FAIL: illegal dot expression at 21`,
-	// },
 	{
 		name: "quote-5",
 		cmd:  `(q)`,
 		out:  `()`,
 		cost: 29,
 	},
-	// {
-	// 	name: "quote-6",
-	// 	cmd:  `(q . 0 1)`,
-	// 	out:  `FAIL: illegal dot expression at 3`,
-	// },
 	{
 		name: "quote-7",
 		cmd:  `(q 0 1)`,
 		out:  `(() 1)`,
 		cost: 29,
 	},
-	// {
-	// 	name: "quote-8",
-	// 	cmd:  `(q . )`,
-	// 	out:  `FAIL: missing )`,
-	// },
 	{
 		name: "quote-explicit-list",
 		cmd:  `(q . ("A" "B"))`,

@@ -12,18 +12,18 @@ import (
 const MAX_SINGLE_BYTE = 0x7F
 const CONS_BOX_MARKER = 0xFF
 
-func _op_read_sexp(opStack *[]interface{}, valStack *[]SExp, buf *utils.ParseBuf) {
+func _opReadSExp(opStack *[]interface{}, valStack *[]SExp, buf *utils.ParseBuf) {
 	b := buf.Uint8()
 	if b == CONS_BOX_MARKER {
-		*opStack = append(*opStack, _op_cons)
-		*opStack = append(*opStack, _op_read_sexp)
-		*opStack = append(*opStack, _op_read_sexp)
+		*opStack = append(*opStack, _opCons)
+		*opStack = append(*opStack, _opReadSExp)
+		*opStack = append(*opStack, _opReadSExp)
 	} else {
-		*valStack = append(*valStack, *_atom_from_stream(buf, b))
+		*valStack = append(*valStack, *_atomFromBytes(buf, b))
 	}
 }
 
-func _op_cons(opStack *[]interface{}, valStack *[]SExp, buf *utils.ParseBuf) {
+func _opCons(opStack *[]interface{}, valStack *[]SExp, buf *utils.ParseBuf) {
 	l := len(*valStack)
 	right := (*valStack)[l-1]
 	left := (*valStack)[l-2]
@@ -31,7 +31,7 @@ func _op_cons(opStack *[]interface{}, valStack *[]SExp, buf *utils.ParseBuf) {
 	*valStack = append(*valStack, Pair{First: left, Rest: right})
 }
 
-func _atom_from_stream(buf *utils.ParseBuf, b byte) *Atom {
+func _atomFromBytes(buf *utils.ParseBuf, b byte) *Atom {
 	if b == 0x80 {
 		return &NULL
 	}
@@ -72,7 +72,7 @@ func _atom_from_stream(buf *utils.ParseBuf, b byte) *Atom {
 
 // https://github.com/Chia-Network/clvm/blob/main/clvm/serialize.py
 func SExpFromBytes(buf *utils.ParseBuf) SExp {
-	opStack := []interface{}{_op_read_sexp}
+	opStack := []interface{}{_opReadSExp}
 	valStack := make([]SExp, 0, 0)
 
 	for len(opStack) > 0 {
@@ -86,13 +86,21 @@ func SExpFromBytes(buf *utils.ParseBuf) SExp {
 	return valStack[0]
 }
 
-func readIRSpaces(str string, pos int) int {
+// sexp is nil or isListStart is true
+type irStackItem struct {
+	sexp          SExp
+	isListStart   bool
+	consWithNext  bool
+	consStringPos int
+}
+
+func irReadSpaces(str string, pos int) int {
 	for pos < len(str) && str[pos] == ' ' {
 		pos += 1
 	}
 	return pos
 }
-func readIRToken(str string, pos int) (string, int) {
+func irReadToken(str string, pos int) (string, int) {
 	startPos := pos
 	for pos < len(str) {
 		c := str[pos]
@@ -103,93 +111,120 @@ func readIRToken(str string, pos int) (string, int) {
 	}
 	return str[startPos:pos], pos
 }
+func irNonConsSExpOnTop(stack []irStackItem) bool {
+	return len(stack) > 0 && stack[len(stack)-1].sexp != nil && !stack[len(stack)-1].consWithNext
+}
+func irSingleValueList(sexp SExp) bool {
+	if pair, ok := sexp.(Pair); ok {
+		return pair.Rest.Nullp()
+	}
+	return false
+}
+func irPopListFromStack(stack *[]irStackItem) (SExp, error) {
+	var list SExp = NULL
+	lastConsPos := 0
+	for i := len(*stack) - 1; i >= 0; i -= 1 {
+		item := (*stack)[i]
+		if item.sexp != nil {
+			if item.consWithNext {
+				if lastConsPos == 0 {
+					lastConsPos = item.consStringPos
+				}
+				if !irSingleValueList(list) {
+					return nil, merry.Errorf("from ir: unexpected '.' at pos %d", lastConsPos+1)
+				}
+				list = Pair{First: item.sexp, Rest: list.(Pair).First}
+			} else {
+				list = Pair{First: item.sexp, Rest: list}
+			}
+		} else if item.isListStart {
+			*stack = (*stack)[:i]
+			break
+		}
+	}
+	return list, nil
+}
+func irReadAtom(str string, pos int) (int, Atom, error) {
+	tokenStartPos := pos
+	var token string
+	token, pos = irReadToken(str, pos)
+	if vInt, ok := (&big.Int{}).SetString(token, 10); ok {
+		// int
+		return pos, AtomFromInt(vInt), nil
+	}
+	if strings.HasPrefix(token, "0x") || strings.HasPrefix(token, "0X") {
+		// hex
+		hexChars := []byte(token)[2:]
+		if len(token)%2 == 1 {
+			hexChars = []byte(token)[1:]
+			hexChars[0] = '0'
+		}
+		buf := make([]byte, len(hexChars)/2)
+		if _, err := hex.Decode(buf, hexChars); err != nil {
+			return pos, Atom{}, merry.Errorf("from ir: invalid hex at pos %d: %s", tokenStartPos, token)
+		}
+		return pos, Atom{buf}, nil
+	}
+	if len(token) >= 2 && (token[0] == '\'' || token[0] == '"') {
+		// quoted string
+		if token[len(token)-1] != token[0] {
+			return pos, Atom{}, merry.Errorf("from ir: unterminated string starting at pos %d: %s", tokenStartPos, token)
+		}
+		return pos, Atom{[]byte(token[1 : len(token)-1])}, nil
+	}
+	// symbol (as operator)
+	if atom, ok := ATOM_FROM_OP_KEYWORD[token]; ok {
+		return pos, atom, nil
+	}
+	// symbol (as string)
+	return pos, Atom{[]byte(token)}, nil
+}
 func SExpNextFromIRString(str string, pos int) (int, SExp, error) {
-	var stack []interface{}
+	var err error
+	var stack []irStackItem
 	for {
 		if len(stack) == 1 {
-			if obj, ok := stack[0].(SExp); ok {
-				return pos, obj, nil
+			if stack[0].sexp != nil {
+				return pos, stack[0].sexp, nil
 			}
 		}
 
-		pos = readIRSpaces(str, pos)
+		pos = irReadSpaces(str, pos)
 		if pos >= len(str) {
 			break
 		}
 
 		c := str[pos]
 		if c == '(' {
-			stack = append(stack, byte('('))
+			stack = append(stack, irStackItem{isListStart: true})
+			pos += 1
 		} else if c == ')' {
-			i := len(stack) - 1
-			for ; i >= 0; i -= 1 {
-				if sc, ok := stack[i].(byte); ok && sc == '(' {
-					break
-				}
+			if len(stack) == 0 {
+				return pos, nil, merry.Errorf("from ir: unexpected ')' at pos %d", pos+1)
 			}
-			if i < 0 {
-				return pos, nil, merry.Errorf("from ir: %d", i)
+			list, err := irPopListFromStack(&stack)
+			if err != nil {
+				return pos, nil, err
 			}
-			items := stack[i+1:]
-			stack = stack[:i]
-			var list SExp = NULL
-			shouldCons := false
-			for i := len(items) - 1; i >= 0; i -= 1 {
-				item := items[i]
-				if obj, ok := item.(SExp); ok {
-					if shouldCons {
-						list = Pair{First: obj, Rest: list.(Pair).First}
-						shouldCons = false
-					} else {
-						list = Pair{First: obj, Rest: list}
-					}
-				} else if ic, ok := item.(byte); ok && ic == '.' {
-					shouldCons = true
-				} else {
-					return pos, nil, merry.Errorf("from ir: unexpected stack item: %#v", item)
-				}
-			}
-			stack = append(stack, list)
+			stack = append(stack, irStackItem{sexp: list})
+			pos += 1
 		} else if c == '.' {
-			stack = append(stack, byte('.'))
-		} else {
-			tokenStartPos := pos
-			var token string
-			token, pos = readIRToken(str, pos)
-			pos -= 1
-			if vInt, ok := (&big.Int{}).SetString(token, 10); ok {
-				// int
-				stack = append(stack, AtomFromInt(vInt))
-			} else if strings.HasPrefix(token, "0x") || strings.HasPrefix(token, "0X") {
-				// hex
-				hexChars := []byte(token)[2:]
-				if len(token)%2 == 1 {
-					hexChars = []byte(token)[1:]
-					hexChars[0] = '0'
-				}
-				buf := make([]byte, len(hexChars)/2)
-				if _, err := hex.Decode(buf, hexChars); err != nil {
-					return pos, nil, merry.Errorf("from ir: invalid hex at %d: %s", tokenStartPos, token)
-				}
-				stack = append(stack, Atom{buf})
-			} else if len(token) >= 2 && (token[0] == '\'' || token[0] == '"') {
-				// quoted string
-				if token[len(token)-1] != token[0] {
-					return pos, nil, merry.Errorf("from ir: unterminated string starting at %d: %s", tokenStartPos, token)
-				}
-				stack = append(stack, Atom{[]byte(token[1 : len(token)-1])})
-			} else {
-				// symbol
-				if atom, ok := ATOM_FROM_OP_KEYWORD[token]; ok {
-					stack = append(stack, atom)
-				} else {
-					stack = append(stack, Atom{[]byte(token)})
-				}
+			if !irNonConsSExpOnTop(stack) {
+				return pos, nil, merry.Errorf("from ir: unexpected '.' at pos %d", pos+1)
 			}
+			stack[len(stack)-1].consWithNext = true
+			stack[len(stack)-1].consStringPos = pos
+			pos += 1
+		} else {
+			var atom Atom
+			pos, atom, err = irReadAtom(str, pos)
+			if err != nil {
+				return pos, nil, err
+			}
+			stack = append(stack, irStackItem{sexp: atom})
 		}
-		pos += 1
 	}
-	return pos, nil, merry.Errorf("from ir: unexpected string end")
+	return pos, nil, merry.Errorf("from ir: unexpected end of string")
 }
 
 func SExpFromIRString(str string) (SExp, error) {
@@ -197,9 +232,9 @@ func SExpFromIRString(str string) (SExp, error) {
 	if err != nil {
 		return nil, merry.Wrap(err)
 	}
-	pos = readIRSpaces(str, pos)
+	pos = irReadSpaces(str, pos)
 	if pos != len(str) {
-		return obj, merry.Errorf("from ir: extra characters in string with len %d after pos %d", len(str), pos)
+		return obj, merry.Errorf("from ir: extra characters in string with len %d after pos %d", len(str), pos+1)
 	}
 	return obj, nil
 }
@@ -211,17 +246,17 @@ func SExpOneOrTwoFromIRString(str string) (SExp, SExp, error) {
 	}
 
 	var objB SExp = NULL
-	pos = readIRSpaces(str, pos)
+	pos = irReadSpaces(str, pos)
 	if pos < len(str) {
 		pos, objB, err = SExpNextFromIRString(str, pos)
 		if err != nil {
 			return objA, nil, merry.Wrap(err)
 		}
-		pos = readIRSpaces(str, pos)
+		pos = irReadSpaces(str, pos)
 	}
 
 	if pos != len(str) {
-		return objA, objB, merry.Errorf("from ir: extra characters in string with len %d after pos %d", len(str), pos)
+		return objA, objB, merry.Errorf("from ir: extra characters in string with len %d after pos %d", len(str), pos+1)
 	}
 	return objA, objB, nil
 }

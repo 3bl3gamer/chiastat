@@ -168,52 +168,73 @@ func TestAtomAsInt64(t *testing.T) {
 }
 
 func TestFromIRString(t *testing.T) {
-	testOk := func(ir string, dest string) {
+	test := func(ir string, dest string) {
 		res, err := SExpFromIRString(ir)
-		if err != nil {
-			t.Errorf("FromIRString '%s' failed: %s", ir, err)
+		var resStr string
+		if err == nil {
+			resStr = res.StringExt(StringExtCfg{Keywords: true, OnlyHexValues: true, CompactLists: false, Nil: "nil"})
+		} else {
+			resStr = "FAIL: " + err.Error()
 		}
-		resStr := res.StringExt(StringExtCfg{Keywords: true, OnlyHexValues: true, CompactLists: false, Nil: "nil"})
 		if resStr != dest {
 			t.Errorf("FromIRString '%s' result: %s != %s", ir, resStr, dest)
 		}
 	}
-	testOk("0", "nil")
-	testOk("1", "01")
-	testOk("127", "7f")
-	testOk("128", "0080")
-	testOk("255", "00ff")
-	testOk("1024", "0400")
-	testOk("-1", "ff")
-	testOk("-32769", "ff7fff")
+	test("0", "nil")
+	test("1", "01")
+	test("127", "7f")
+	test("128", "0080")
+	test("255", "00ff")
+	test("1024", "0400")
+	test("-1", "ff")
+	test("-32769", "ff7fff")
 
-	testOk("0x", "nil")
-	testOk("0x0", "00")
-	testOk("0x1", "01")
-	testOk("0xff", "ff")
-	testOk("0x4ff", "04ff")
-	testOk("0x04ff", "04ff")
+	test("0x", "nil")
+	test("0x0", "00")
+	test("0x1", "01")
+	test("0xff", "ff")
+	test("0x4ff", "04ff")
+	test("0x04ff", "04ff")
 
-	testOk(`""`, `nil`)
-	testOk(`"A"`, `41`)
-	testOk(`"ABC"`, `414243`)
-	testOk(`'ABC'`, `414243`)
+	test(`""`, `nil`)
+	test(`"A"`, `41`)
+	test(`"ABC"`, `414243`)
+	test(`'ABC'`, `414243`)
 
-	testOk("q", "01")
-	testOk("a", "02")
-	testOk("i", "03")
-	testOk("if", "6966")
+	test("q", "01")
+	test("a", "02")
+	test("i", "03")
+	test("if", "6966")
 
-	testOk("()", "nil")
-	testOk("(())", "(nil . nil)")
-	testOk("((0))", "((nil . nil) . nil)")
-	testOk("(1)", "(q . nil)")
-	testOk("(1024)", "(0400 . nil)")
-	testOk("(1 2)", "(q . (a . nil))")
-	testOk("(1 2 3)", "(q . (a . (i . nil)))")
-	testOk("(1 (2))", "(q . ((a . nil) . nil))")
-	testOk("(i () 1 2)", "(i . (nil . (q . (a . nil))))")
+	test("()", "nil")
+	test("(())", "(nil . nil)")
+	test("((0))", "((nil . nil) . nil)")
+	test("(1)", "(q . nil)")
+	test("(1024)", "(0400 . nil)")
+	test("(1 2)", "(q . (a . nil))")
+	test("(1 2 3)", "(q . (a . (i . nil)))")
+	test("(1 (2))", "(q . ((a . nil) . nil))")
+	test("(i () 1 2)", "(i . (nil . (q . (a . nil))))")
 
-	testOk("(1 . 2)", "(q . 02)")
-	testOk("(1 . (2))", "(q . (a . nil))")
+	test("(1 . 2)", "(q . 02)")
+	test("(1 . (2))", "(q . (a . nil))")
+	test("(1 2 . 3)", "(q . (a . 03))")
+
+	test("   (   1   .   2   )   ", "(q . 02)")
+
+	test("", "FAIL: from ir: unexpected end of string")
+	test("(", "FAIL: from ir: unexpected end of string")
+	test("(1", "FAIL: from ir: unexpected end of string")
+	test("(1 .", "FAIL: from ir: unexpected end of string")
+	test("(1 . 2", "FAIL: from ir: unexpected end of string")
+	test(")", "FAIL: from ir: unexpected ')' at pos 1")
+	test("1)", "FAIL: from ir: extra characters in string with len 2 after pos 2")
+	test(". 2)", "FAIL: from ir: unexpected '.' at pos 1")
+	test("1 . 2)", "FAIL: from ir: extra characters in string with len 6 after pos 3")
+	test("(. 1 . 2)", "FAIL: from ir: unexpected '.' at pos 2")
+	test("(1 . . 2)", "FAIL: from ir: unexpected '.' at pos 6")
+	test("(1 . 2 . )", "FAIL: from ir: unexpected '.' at pos 8")
+	test("(1 . 2 . 3)", "FAIL: from ir: unexpected '.' at pos 8")
+	test("(1 . 2 . 3)", "FAIL: from ir: unexpected '.' at pos 8")
+	test("(1 . 2 3)", "FAIL: from ir: unexpected '.' at pos 4")
 }
