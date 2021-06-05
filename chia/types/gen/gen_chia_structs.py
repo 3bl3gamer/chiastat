@@ -273,6 +273,8 @@ source_classes = {
     # ===
     'server/outbound_message.py': ['Message'],
     'protocols/shared_protocol.py': ['Handshake'],
+    'protocols/full_node_protocol.py': ['RequestPeers', 'RespondPeers'],
+    'types/peer_info.py': ['TimestampedPeerInfo'],
 }
 
 modules = []

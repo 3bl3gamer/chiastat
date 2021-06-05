@@ -3,6 +3,7 @@ package main
 import (
 	"chiastat/chia"
 	"chiastat/chia/network"
+	"chiastat/chia/types"
 	"chiastat/nodes"
 	"chiastat/utils"
 	"flag"
@@ -10,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ansel1/merry"
 	_ "github.com/mattn/go-sqlite3"
@@ -120,6 +122,50 @@ func CMDHandshake() error {
 	return nil
 }
 
+func CMDRequestPeers() error {
+	address := flag.String("addr", "", "host:port")
+	sslDir := flag.String("ssl-dir", utils.HomeDirOrEmpty("/.chia/mainnet/ssl"), "path to chia/mainnet/ssl directory")
+	flag.Parse()
+	if *address == "" {
+		return merry.Errorf("-addr is required")
+	}
+
+	cfg, err := network.MakeTSLConfigFromFiles(
+		*sslDir+"/ca/chia_ca.crt",
+		*sslDir+"/full_node/public_full_node.crt",
+		*sslDir+"/full_node/public_full_node.key")
+	if err != nil {
+		return merry.Wrap(err)
+	}
+	c, err := network.ConnectTo(cfg, *address)
+	if err != nil {
+		return merry.Wrap(err)
+	}
+	_, err = c.PerformHandshake()
+	if err != nil {
+		return merry.Wrap(err)
+	}
+
+	c.StartRoutines()
+	respChan, err := c.Send(types.MSG_REQUEST_PEERS, types.RequestPeers{})
+	if err != nil {
+		return merry.Wrap(err)
+	}
+	res := <-respChan
+	peers, ok := res.(*types.RespondPeers)
+	if !ok {
+		return merry.Errorf("unexpected response type: #T", res)
+	}
+
+	for i, peer := range peers.PeerList {
+		stamp := time.Unix(int64(peer.Timestamp), 0).Format("2006-01-02 15:04:05 NST")
+		fmt.Printf("#%d\t%s\t%d\t%s\n", i, peer.Host, peer.Port, stamp)
+	}
+	fmt.Println("total peers: ", len(peers.PeerList))
+
+	return nil
+}
+
 var commands = map[string]func() error{
 	"listen-nodes":  nodes.CMDListenNodes,
 	"update-nodes":  nodes.CMDUpdateNodes,
@@ -130,6 +176,7 @@ var commands = map[string]func() error{
 	"export-blocks": CMDExportBlocks,
 	"eval-block":    CMDEvalBlock,
 	"handshake":     CMDHandshake,
+	"request-peers": CMDRequestPeers,
 }
 
 func printUsage() {

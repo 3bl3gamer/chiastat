@@ -951,6 +951,56 @@ func (obj Handshake) ToBytes(buf *[]byte) {
 	}
 }
 
+// Return full list of peers
+type RequestPeers struct {
+}
+
+func (obj *RequestPeers) FromBytes(buf *utils.ParseBuf) {
+}
+
+func (obj RequestPeers) ToBytes(buf *[]byte) {
+}
+
+type RespondPeers struct {
+	PeerList []TimestampedPeerInfo
+}
+
+func (obj *RespondPeers) FromBytes(buf *utils.ParseBuf) {
+	len_obj_PeerList := buf.Uint32()
+	obj.PeerList = make([]TimestampedPeerInfo, len_obj_PeerList)
+	for i := uint32(0); i < len_obj_PeerList; i++ {
+		obj.PeerList[i].FromBytes(buf)
+		if buf.Err() != nil {
+			return
+		}
+	}
+}
+
+func (obj RespondPeers) ToBytes(buf *[]byte) {
+	utils.Uint32ToBytes(buf, uint32(len(obj.PeerList)))
+	for _, item := range obj.PeerList {
+		item.ToBytes(buf)
+	}
+}
+
+type TimestampedPeerInfo struct {
+	Host      string
+	Port      uint16
+	Timestamp uint64
+}
+
+func (obj *TimestampedPeerInfo) FromBytes(buf *utils.ParseBuf) {
+	obj.Host = buf.String()
+	obj.Port = buf.Uint16()
+	obj.Timestamp = buf.Uint64()
+}
+
+func (obj TimestampedPeerInfo) ToBytes(buf *[]byte) {
+	utils.StringToBytes(buf, obj.Host)
+	utils.Uint16ToBytes(buf, obj.Port)
+	utils.Uint64ToBytes(buf, obj.Timestamp)
+}
+
 // === Tuples ===
 
 type TupleUint16Str struct {

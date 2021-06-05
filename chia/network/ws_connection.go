@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"log"
 	"os"
 	"time"
 
@@ -18,9 +19,13 @@ const NETWORK_ID = "mainnet"
 const PROTOCOL_VERSION = "0.0.32"
 const SOFTWARE_VERSION = "1.1.6"
 
+// https://github.com/Chia-Network/chia-blockchain/blob/latest/chia/server/ws_connection.py
 type WSChiaConnection struct {
-	PeerID [32]byte
-	WS     *websocket.Conn
+	peerID           [32]byte
+	ws               *websocket.Conn
+	isOutbound       bool
+	lastRequestNonce uint16
+	pendingRequests  map[uint16]chan utils.FromBytes
 }
 
 func MakeTSLConfigFromFiles(caCertPath, nodeCertPath, nodeKeyPath string) (*tls.Config, error) {
@@ -100,10 +105,15 @@ func ConnectTo(tlsConfig *tls.Config, address string) (*WSChiaConnection, error)
 	certs := c.UnderlyingConn().(*tls.Conn).ConnectionState().PeerCertificates
 	peerID := sha256.Sum256(certs[0].Raw)
 
-	return &WSChiaConnection{PeerID: peerID, WS: c}, nil
+	return &WSChiaConnection{
+		peerID:          peerID,
+		ws:              c,
+		isOutbound:      true,
+		pendingRequests: make(map[uint16]chan utils.FromBytes),
+	}, nil
 }
 
-func (c *WSChiaConnection) PerformHandshake() (*types.Handshake, error) {
+func (c WSChiaConnection) PerformHandshake() (*types.Handshake, error) {
 	msgOut := types.Message{
 		Type: types.MSG_HANDSHAKE,
 		Data: utils.ToByteSlice(types.Handshake{
@@ -116,12 +126,12 @@ func (c *WSChiaConnection) PerformHandshake() (*types.Handshake, error) {
 		}),
 	}
 
-	err := c.WS.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msgOut))
+	err := c.ws.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msgOut))
 	if err != nil {
 		return nil, merry.Wrap(err)
 	}
 
-	msgType, buf, err := c.WS.ReadMessage()
+	msgType, buf, err := c.ws.ReadMessage()
 	if err != nil {
 		return nil, merry.Wrap(err)
 	}
@@ -147,4 +157,79 @@ func (c *WSChiaConnection) PerformHandshake() (*types.Handshake, error) {
 	}
 
 	return &hs, nil
+}
+
+func (c *WSChiaConnection) StartRoutines() {
+	go c.readRoutine()
+}
+
+func (c *WSChiaConnection) readRoutine() {
+	for {
+		msgType, buf, err := c.ws.ReadMessage()
+		if err != nil {
+			panic(err) //TODO
+		}
+		if msgType != websocket.BinaryMessage {
+			log.Printf("WARN: unexpected WS mesage type: expected binary(%d), got %d",
+				websocket.BinaryMessage, msgType)
+			continue
+		}
+		if err := c.process(buf); err != nil {
+			panic(err) //TODO
+		}
+	}
+}
+
+func (c *WSChiaConnection) process(msgBuf []byte) error {
+	var msg types.Message
+	if err := utils.FromByteSliceExact(msgBuf, &msg); err != nil {
+		return merry.Wrap(err)
+	}
+	switch msg.Type {
+	case types.MSG_RESPOND_PEERS:
+		var peers types.RespondPeers
+		if err := utils.FromByteSliceExact(msg.Data, &peers); err != nil {
+			return merry.Wrap(err)
+		}
+		//TODO: mutex
+		resChan, ok := c.pendingRequests[msg.ID]
+		if !ok {
+			return merry.Errorf("unexpected message ID: %d", msg.ID)
+		}
+		delete(c.pendingRequests, msg.ID)
+		//TODO: mutex end
+		resChan <- &peers
+	default:
+		log.Printf("WARN: unsupported message type: %d", msg.Type)
+	}
+	return nil
+}
+
+func (c *WSChiaConnection) Send(msgType uint8, request utils.ToBytes) (chan utils.FromBytes, error) {
+	// TODO: mutex
+	// The request nonce is an integer between 0 and 2**16 - 1, which is used to match requests to responses
+	// If is_outbound, 1 <= nonce < 2^15, else  2^15 <= nonce < 2^16
+	// (nonce=0 is not used, differs from https://github.com/Chia-Network/chia-blockchain/blob/latest/chia/server/ws_connection.py)
+	if c.isOutbound {
+		if c.lastRequestNonce > 0 && c.lastRequestNonce < 1<<15-1 {
+			c.lastRequestNonce += 1
+		} else {
+			c.lastRequestNonce = 1
+		}
+	} else {
+		if c.lastRequestNonce > 0 && c.lastRequestNonce < 1<<16-1 {
+			c.lastRequestNonce += 1
+		} else {
+			c.lastRequestNonce = 1 << 15
+		}
+	}
+	msg := types.Message{
+		Type: msgType,
+		ID:   c.lastRequestNonce,
+		Data: utils.ToByteSlice(request),
+	}
+	respChan := make(chan utils.FromBytes, 1)
+	c.pendingRequests[msg.ID] = respChan
+	err := c.ws.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msg))
+	return respChan, merry.Wrap(err)
 }
