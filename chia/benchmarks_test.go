@@ -2,6 +2,7 @@ package chia
 
 import (
 	"chiastat/chia/clvm"
+	"chiastat/chia/types"
 	"chiastat/chia/utils"
 	"encoding/hex"
 	"strings"
@@ -65,7 +66,7 @@ func BenchmarkFullBlockFromBytes(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		buf.SeekSet(0)
-		FullBlockFromBytes(buf)
+		types.FullBlockFromBytes(buf)
 	}
 	buf.EnsureEmpty()
 	if buf.Err() != nil {
@@ -360,7 +361,7 @@ func BenchmarkDumpTo(b *testing.B) {
 		b.Fatal(err)
 	}
 	buf := utils.NewParseBuf(bytes)
-	prog := SerializedProgramFromBytes(buf)
+	prog := types.SerializedProgramFromBytes(buf)
 	buf.EnsureEmpty()
 	if buf.Err() != nil {
 		b.Fatal(buf.Err())

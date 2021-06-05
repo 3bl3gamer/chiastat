@@ -1,4 +1,4 @@
-package chia
+package types
 
 import (
 	"chiastat/chia/clvm"
@@ -20,4 +20,8 @@ func SerializedProgramFromBytes(buf *utils.ParseBuf) (obj SerializedProgram) {
 	obj.Root = sexp
 	obj.Bytes = buf.Copy(startBufPos, buf.Pos())
 	return
+}
+
+func (p SerializedProgram) ToBytes(buf *[]byte) {
+	panic("not implemented yet")
 }

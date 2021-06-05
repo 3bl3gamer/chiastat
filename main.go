@@ -2,6 +2,7 @@ package main
 
 import (
 	"chiastat/chia"
+	"chiastat/chia/network"
 	"chiastat/nodes"
 	"chiastat/utils"
 	"flag"
@@ -91,6 +92,34 @@ func CMDEvalBlock() error {
 	return merry.Wrap(chia.EvalFullBlockFromDB(db, uint32(*height)))
 }
 
+func CMDHandshake() error {
+	address := flag.String("addr", "", "host:port")
+	sslDir := flag.String("ssl-dir", utils.HomeDirOrEmpty("/.chia/mainnet/ssl"), "path to chia/mainnet/ssl directory")
+	flag.Parse()
+	if *address == "" {
+		return merry.Errorf("-addr is required")
+	}
+
+	cfg, err := network.MakeTSLConfigFromFiles(
+		*sslDir+"/ca/chia_ca.crt",
+		*sslDir+"/full_node/public_full_node.crt",
+		*sslDir+"/full_node/public_full_node.key")
+	if err != nil {
+		return merry.Wrap(err)
+	}
+	c, err := network.ConnectTo(cfg, *address)
+	if err != nil {
+		return merry.Wrap(err)
+	}
+	hs, err := c.PerformHandshake()
+	if err != nil {
+		return merry.Wrap(err)
+	}
+
+	fmt.Printf("handshake response: %#v\n", hs)
+	return nil
+}
+
 var commands = map[string]func() error{
 	"listen-nodes":  nodes.CMDListenNodes,
 	"update-nodes":  nodes.CMDUpdateNodes,
@@ -100,6 +129,7 @@ var commands = map[string]func() error{
 	"size-chart":    CMDSizeChart,
 	"export-blocks": CMDExportBlocks,
 	"eval-block":    CMDEvalBlock,
+	"handshake":     CMDHandshake,
 }
 
 func printUsage() {

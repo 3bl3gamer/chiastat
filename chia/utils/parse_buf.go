@@ -92,6 +92,15 @@ func (b *ParseBuf) Uint8() uint8 {
 	return v
 }
 
+func (b *ParseBuf) Uint16() uint16 {
+	if b.err != nil || !b.EnsureBytes(2) {
+		return 0
+	}
+	v := binary.BigEndian.Uint16(b.buf[b.pos:])
+	b.pos += 2
+	return v
+}
+
 func (b *ParseBuf) Uint32() uint32 {
 	if b.err != nil || !b.EnsureBytes(4) {
 		return 0
@@ -153,4 +162,76 @@ func (b *ParseBuf) Bytes() []byte {
 		return []byte{}
 	}
 	return b.BytesN(l)
+}
+
+func (b *ParseBuf) String() string {
+	return string(b.Bytes())
+}
+
+func BoolToBytes(buf *[]byte, val bool) {
+	v := byte(0)
+	if val {
+		v = 1
+	}
+	*buf = append(*buf, v)
+}
+
+func Uint8ToBytes(buf *[]byte, val uint8) {
+	*buf = append(*buf, val)
+}
+
+func Uint16ToBytes(buf *[]byte, val uint16) {
+	t := make([]byte, 2)
+	binary.BigEndian.PutUint16(t, val)
+	*buf = append(*buf, t...)
+}
+
+func Uint32ToBytes(buf *[]byte, val uint32) {
+	t := make([]byte, 4)
+	binary.BigEndian.PutUint32(t, val)
+	*buf = append(*buf, t...)
+}
+
+func Uint64ToBytes(buf *[]byte, val uint64) {
+	t := make([]byte, 8)
+	binary.BigEndian.PutUint64(t, val)
+	*buf = append(*buf, t...)
+}
+
+func Uint128ToBytes(buf *[]byte, val *big.Int) {
+	t := make([]byte, 16)
+	copy(t, val.Bytes())
+	*buf = append(*buf, t...)
+}
+
+func StringToBytes(buf *[]byte, val string) {
+	Uint32ToBytes(buf, uint32(len(val)))
+	*buf = append(*buf, []byte(val)...)
+}
+
+func Bytes32ToBytes(buf *[]byte, data [32]byte) {
+	*buf = append(*buf, data[:]...)
+}
+
+func Bytes100ToBytes(buf *[]byte, data [100]byte) {
+	*buf = append(*buf, data[:]...)
+}
+
+func BytesWOSizeToBytes(buf *[]byte, data []byte) {
+	*buf = append(*buf, data...)
+}
+
+func BytesToBytes(buf *[]byte, data []byte) {
+	Uint32ToBytes(buf, uint32(len(data)))
+	*buf = append(*buf, data...)
+}
+
+type ToBytes interface {
+	ToBytes(buf *[]byte)
+}
+
+func ToByteSlice(obj ToBytes) []byte {
+	var buf []byte
+	obj.ToBytes(&buf)
+	return buf
 }

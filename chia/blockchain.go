@@ -2,6 +2,7 @@ package chia
 
 import (
 	"chiastat/chia/clvm"
+	"chiastat/chia/types"
 	"chiastat/chia/utils"
 	"database/sql"
 	_ "embed"
@@ -21,14 +22,14 @@ type Scanner interface {
 	Scan(dest ...interface{}) error
 }
 
-func BlockRecordFromRow(rows Scanner) (*BlockRecord, error) {
+func BlockRecordFromRow(rows Scanner) (*types.BlockRecord, error) {
 	var blockBytes []byte
 	err := rows.Scan(&blockBytes)
 	if err != nil {
 		return nil, merry.Wrap(err)
 	}
 	buf := utils.NewParseBuf(blockBytes)
-	br := BlockRecordFromBytes(buf)
+	br := types.BlockRecordFromBytes(buf)
 	buf.EnsureEmpty()
 	if buf.Err() != nil {
 		return nil, buf.Err()
@@ -36,18 +37,18 @@ func BlockRecordFromRow(rows Scanner) (*BlockRecord, error) {
 	return &br, nil
 }
 
-func BlockRecordByHeight(db *sql.DB, height int64) (*BlockRecord, error) {
+func BlockRecordByHeight(db *sql.DB, height int64) (*types.BlockRecord, error) {
 	row := db.QueryRow("SELECT block FROM block_records WHERE height = ?", height)
 	return BlockRecordFromRow(row)
 }
 
-func FullBlockFromRow(row Scanner) (*FullBlock, error) {
+func FullBlockFromRow(row Scanner) (*types.FullBlock, error) {
 	var blockBytes []byte
 	if err := row.Scan(&blockBytes); err != nil {
 		return nil, merry.Wrap(err)
 	}
 	buf := utils.NewParseBuf(blockBytes)
-	block := FullBlockFromBytes(buf)
+	block := types.FullBlockFromBytes(buf)
 	buf.EnsureEmpty()
 	if buf.Err() != nil {
 		return nil, buf.Err()
@@ -55,7 +56,7 @@ func FullBlockFromRow(row Scanner) (*FullBlock, error) {
 	return &block, nil
 }
 
-func FullBlockByHeight(db *sql.DB, height uint32) (*FullBlock, error) {
+func FullBlockByHeight(db *sql.DB, height uint32) (*types.FullBlock, error) {
 	row := db.QueryRow("SELECT block FROM full_blocks WHERE height = ?", height)
 	return FullBlockFromRow(row)
 }
@@ -76,10 +77,10 @@ func estimateNetworkSpaceInner(weight0, weight1 *big.Int, totalIters0, totalIter
 	spaceEstimate.Div(spaceEstimate, big.NewInt(1000000))
 	return spaceEstimate
 }
-func EstimateNetworkSpace(br0, br1 *BlockRecord) *big.Int {
+func EstimateNetworkSpace(br0, br1 *types.BlockRecord) *big.Int {
 	return estimateNetworkSpaceInner(br0.Weight, br1.Weight, br0.TotalIters, br1.TotalIters)
 }
-func EstimateNetworkSpaceFull(fb0, fb1 *FullBlock) *big.Int {
+func EstimateNetworkSpaceFull(fb0, fb1 *types.FullBlock) *big.Int {
 	rcb0 := &fb0.RewardChainBlock
 	rcb1 := &fb1.RewardChainBlock
 	return estimateNetworkSpaceInner(rcb0.Weight, rcb1.Weight, rcb0.TotalIters, rcb1.TotalIters)
@@ -154,7 +155,7 @@ func (buf *RingBuf) Last() interface{} {
 }
 
 type StampedRecord struct {
-	Block *BlockRecord
+	Block *types.BlockRecord
 	Stamp int64
 }
 
@@ -280,7 +281,7 @@ func EvalFullBlockFromDB(db *sql.DB, height uint32) error {
 	}
 	fmt.Println("ref list:", block.TransactionsGeneratorRefList)
 
-	refBlocks := make([]*FullBlock, len(block.TransactionsGeneratorRefList))
+	refBlocks := make([]*types.FullBlock, len(block.TransactionsGeneratorRefList))
 	for i, refHeight := range block.TransactionsGeneratorRefList {
 		refBlocks[i], err = FullBlockByHeight(db, refHeight)
 		if err != nil {

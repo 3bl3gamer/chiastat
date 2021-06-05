@@ -500,7 +500,7 @@ func runApply(opStack *[]interface{}, valueStack *[]SExp) (int64, error) {
 			fmt.Println("op", OP_FROM_BYTE[op.Bytes[0]].name)
 		}
 	}
-	if opFunc != nil { //TODO: more bytes/zero bytes
+	if opFunc != nil {
 		cost, r, err := opFunc(operandList)
 		if err != nil {
 			return 0, err
