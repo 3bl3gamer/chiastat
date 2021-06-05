@@ -107,7 +107,7 @@ func (c *WSChiaConnection) PerformHandshake() (*types.Handshake, error) {
 	msg := types.Message{
 		Type: types.MSG_HANDSHAKE,
 		Data: utils.ToByteSlice(types.Handshake{
-			NetworkId:       NETWORK_ID,
+			NetworkID:       NETWORK_ID,
 			ProtocolVersion: PROTOCOL_VERSION,
 			SoftwareVersion: SOFTWARE_VERSION,
 			ServerPort:      8444,

@@ -889,14 +889,14 @@ type Message struct {
 	// one of ProtocolMessageTypes
 	Type uint8
 	// (optional)
-	Id   uint16
+	ID   uint16
 	Data []byte
 }
 
 func MessageFromBytes(buf *utils.ParseBuf) (obj Message) {
 	obj.Type = buf.Uint8()
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		obj.Id = buf.Uint16()
+		obj.ID = buf.Uint16()
 	}
 	obj.Data = buf.Bytes()
 	return
@@ -904,16 +904,16 @@ func MessageFromBytes(buf *utils.ParseBuf) (obj Message) {
 
 func (obj Message) ToBytes(buf *[]byte) {
 	utils.Uint8ToBytes(buf, obj.Type)
-	obj_Id_isSet := !(obj.Id == 0)
-	utils.BoolToBytes(buf, obj_Id_isSet)
-	if obj_Id_isSet {
-		utils.Uint16ToBytes(buf, obj.Id)
+	obj_ID_isSet := !(obj.ID == 0)
+	utils.BoolToBytes(buf, obj_ID_isSet)
+	if obj_ID_isSet {
+		utils.Uint16ToBytes(buf, obj.ID)
 	}
 	utils.BytesToBytes(buf, obj.Data)
 }
 
 type Handshake struct {
-	NetworkId       string
+	NetworkID       string
 	ProtocolVersion string
 	SoftwareVersion string
 	ServerPort      uint16
@@ -922,7 +922,7 @@ type Handshake struct {
 }
 
 func HandshakeFromBytes(buf *utils.ParseBuf) (obj Handshake) {
-	obj.NetworkId = buf.String()
+	obj.NetworkID = buf.String()
 	obj.ProtocolVersion = buf.String()
 	obj.SoftwareVersion = buf.String()
 	obj.ServerPort = buf.Uint16()
@@ -939,7 +939,7 @@ func HandshakeFromBytes(buf *utils.ParseBuf) (obj Handshake) {
 }
 
 func (obj Handshake) ToBytes(buf *[]byte) {
-	utils.StringToBytes(buf, obj.NetworkId)
+	utils.StringToBytes(buf, obj.NetworkID)
 	utils.StringToBytes(buf, obj.ProtocolVersion)
 	utils.StringToBytes(buf, obj.SoftwareVersion)
 	utils.Uint16ToBytes(buf, obj.ServerPort)

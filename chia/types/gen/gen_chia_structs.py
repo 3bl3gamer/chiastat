@@ -21,6 +21,12 @@ def to_camel_case(string):
 def to_pascal_case(string):
     return ''.join(cap_first(x) for x in string.split('_'))
 
+def to_attr_name(string):
+    name = to_pascal_case(string)
+    if name.endswith('Id'):
+        name = name[:-2] + 'ID'
+    return name
+
 
 def get_annotation(annotation):
     if isinstance(annotation, ast.Name):
@@ -227,20 +233,20 @@ def make_struct_def(struct_def_data):
     for (name, ann_items, attr_docstring) in attrs:
         if attr_docstring is not None:
             def_text += '// ' + attr_docstring + '\n'
-        def_text += to_pascal_case(name) + ' ' + make_type_def(ann_items) + '\n'
+        def_text += to_attr_name(name) + ' ' + make_type_def(ann_items) + '\n'
     def_text += '}\n'
 
     # from bytes
     parse_text = f'func {struct_name}FromBytes(buf *utils.ParseBuf) (obj {struct_name}) {{\n'
     for (name, ann_items, attr_docstring) in attrs:
-        parse_text += make_type_parse('obj.' + to_pascal_case(name), ann_items)
+        parse_text += make_type_parse('obj.' + to_attr_name(name), ann_items)
     parse_text += f'return\n'
     parse_text += '}\n'
 
     # to bytes
     ser_text = f'func (obj {struct_name}) ToBytes(buf *[]byte) {{\n'
     for (name, ann_items, attr_docstring) in attrs:
-        ser_text += make_type_serialize('obj.' + to_pascal_case(name), ann_items)
+        ser_text += make_type_serialize('obj.' + to_attr_name(name), ann_items)
     ser_text += '}\n'
 
     return def_text + '\n\n' + parse_text + '\n\n' + ser_text
