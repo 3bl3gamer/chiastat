@@ -11,15 +11,14 @@ type SerializedProgram struct {
 }
 
 // https://github.com/Chia-Network/clvm/blob/main/clvm/serialize.py
-func SerializedProgramFromBytes(buf *utils.ParseBuf) (obj SerializedProgram) {
+func (prog *SerializedProgram) FromBytes(buf *utils.ParseBuf) {
 	startBufPos := buf.Pos()
 	sexp := clvm.SExpFromBytes(buf)
 	if buf.Err() != nil {
 		return
 	}
-	obj.Root = sexp
-	obj.Bytes = buf.Copy(startBufPos, buf.Pos())
-	return
+	prog.Root = sexp
+	prog.Bytes = buf.Copy(startBufPos, buf.Pos())
 }
 
 func (p SerializedProgram) ToBytes(buf *[]byte) {

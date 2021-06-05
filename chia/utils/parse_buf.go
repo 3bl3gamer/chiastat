@@ -235,3 +235,14 @@ func ToByteSlice(obj ToBytes) []byte {
 	obj.ToBytes(&buf)
 	return buf
 }
+
+type FromBytes interface {
+	FromBytes(buf *ParseBuf)
+}
+
+func FromByteSliceExact(buf []byte, obj FromBytes) error {
+	pBuf := NewParseBuf(buf)
+	obj.FromBytes(pBuf)
+	pBuf.EnsureEmpty()
+	return merry.Wrap(pBuf.Err())
+}

@@ -104,7 +104,7 @@ func ConnectTo(tlsConfig *tls.Config, address string) (*WSChiaConnection, error)
 }
 
 func (c *WSChiaConnection) PerformHandshake() (*types.Handshake, error) {
-	msg := types.Message{
+	msgOut := types.Message{
 		Type: types.MSG_HANDSHAKE,
 		Data: utils.ToByteSlice(types.Handshake{
 			NetworkID:       NETWORK_ID,
@@ -116,7 +116,7 @@ func (c *WSChiaConnection) PerformHandshake() (*types.Handshake, error) {
 		}),
 	}
 
-	err := c.WS.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msg))
+	err := c.WS.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msgOut))
 	if err != nil {
 		return nil, merry.Wrap(err)
 	}
@@ -131,23 +131,19 @@ func (c *WSChiaConnection) PerformHandshake() (*types.Handshake, error) {
 			websocket.BinaryMessage, msgType)
 	}
 
-	pBuf := utils.NewParseBuf(buf)
-	msg = types.MessageFromBytes(pBuf)
-	pBuf.EnsureEmpty()
-	if pBuf.Err() != nil {
-		return nil, merry.Wrap(pBuf.Err())
+	var msgIn types.Message
+	if err := utils.FromByteSliceExact(buf, &msgIn); err != nil {
+		return nil, merry.Wrap(err)
 	}
 
-	if msg.Type != types.MSG_HANDSHAKE {
+	if msgIn.Type != types.MSG_HANDSHAKE {
 		return nil, merry.Errorf("unexpected message type: expected handshake(%d), got %d",
-			types.MSG_HANDSHAKE, msg.Type)
+			types.MSG_HANDSHAKE, msgIn.Type)
 	}
 
-	pBuf = utils.NewParseBuf(msg.Data)
-	hs := types.HandshakeFromBytes(pBuf)
-	pBuf.EnsureEmpty()
-	if pBuf.Err() != nil {
-		return nil, merry.Wrap(pBuf.Err())
+	var hs types.Handshake
+	if err := utils.FromByteSliceExact(msgIn.Data, &hs); err != nil {
+		return nil, merry.Wrap(err)
 	}
 
 	return &hs, nil

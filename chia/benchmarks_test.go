@@ -66,7 +66,8 @@ func BenchmarkFullBlockFromBytes(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		buf.SeekSet(0)
-		types.FullBlockFromBytes(buf)
+		var block types.FullBlock
+		block.FromBytes(buf)
 	}
 	buf.EnsureEmpty()
 	if buf.Err() != nil {
@@ -360,11 +361,9 @@ func BenchmarkDumpTo(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	buf := utils.NewParseBuf(bytes)
-	prog := types.SerializedProgramFromBytes(buf)
-	buf.EnsureEmpty()
-	if buf.Err() != nil {
-		b.Fatal(buf.Err())
+	var prog types.SerializedProgram
+	if err := utils.FromByteSliceExact(bytes, &prog); err != nil {
+		b.Fatal(err)
 	}
 	var outBuf []byte
 	b.ResetTimer()

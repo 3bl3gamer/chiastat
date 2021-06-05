@@ -55,16 +55,17 @@ type BlockRecord struct {
 	SubEpochSummaryIncluded *SubEpochSummary
 }
 
-func BlockRecordFromBytes(buf *utils.ParseBuf) (obj BlockRecord) {
+func (obj *BlockRecord) FromBytes(buf *utils.ParseBuf) {
 	obj.HeaderHash = buf.Bytes32()
 	obj.PrevHash = buf.Bytes32()
 	obj.Height = buf.Uint32()
 	obj.Weight = buf.Uint128()
 	obj.TotalIters = buf.Uint128()
 	obj.SignagePointIndex = buf.Uint8()
-	obj.ChallengeVdfOutput = ClassgroupElementFromBytes(buf)
+	obj.ChallengeVdfOutput.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = ClassgroupElementFromBytes(buf)
+		var t ClassgroupElement
+		t.FromBytes(buf)
 		obj.InfusedChallengeVdfOutput = &t
 	}
 	obj.RewardInfusionNewChallenge = buf.Bytes32()
@@ -80,7 +81,8 @@ func BlockRecordFromBytes(buf *utils.ParseBuf) (obj BlockRecord) {
 		obj.Timestamp = buf.Uint64()
 	}
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = buf.Bytes32()
+		var t [32]byte
+		t = buf.Bytes32()
 		obj.PrevTransactionBlockHash = &t
 	}
 	if flag := buf.Bool(); buf.Err() == nil && flag {
@@ -90,7 +92,7 @@ func BlockRecordFromBytes(buf *utils.ParseBuf) (obj BlockRecord) {
 		len_obj_RewardClaimsIncorporated := buf.Uint32()
 		obj.RewardClaimsIncorporated = make([]Coin, len_obj_RewardClaimsIncorporated)
 		for i := uint32(0); i < len_obj_RewardClaimsIncorporated; i++ {
-			obj.RewardClaimsIncorporated[i] = CoinFromBytes(buf)
+			obj.RewardClaimsIncorporated[i].FromBytes(buf)
 			if buf.Err() != nil {
 				return
 			}
@@ -127,10 +129,10 @@ func BlockRecordFromBytes(buf *utils.ParseBuf) (obj BlockRecord) {
 		}
 	}
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = SubEpochSummaryFromBytes(buf)
+		var t SubEpochSummary
+		t.FromBytes(buf)
 		obj.SubEpochSummaryIncluded = &t
 	}
-	return
 }
 
 func (obj BlockRecord) ToBytes(buf *[]byte) {
@@ -216,11 +218,10 @@ type Coin struct {
 	Amount         uint64
 }
 
-func CoinFromBytes(buf *utils.ParseBuf) (obj Coin) {
+func (obj *Coin) FromBytes(buf *utils.ParseBuf) {
 	obj.ParentCoinInfo = buf.Bytes32()
 	obj.PuzzleHash = buf.Bytes32()
 	obj.Amount = buf.Uint64()
-	return
 }
 
 func (obj Coin) ToBytes(buf *[]byte) {
@@ -236,9 +237,8 @@ type ClassgroupElement struct {
 	Data [100]byte
 }
 
-func ClassgroupElementFromBytes(buf *utils.ParseBuf) (obj ClassgroupElement) {
+func (obj *ClassgroupElement) FromBytes(buf *utils.ParseBuf) {
 	obj.Data = buf.Bytes100()
-	return
 }
 
 func (obj ClassgroupElement) ToBytes(buf *[]byte) {
@@ -257,7 +257,7 @@ type SubEpochSummary struct {
 	NewSubSlotIters uint64
 }
 
-func SubEpochSummaryFromBytes(buf *utils.ParseBuf) (obj SubEpochSummary) {
+func (obj *SubEpochSummary) FromBytes(buf *utils.ParseBuf) {
 	obj.PrevSubepochSummaryHash = buf.Bytes32()
 	obj.RewardChainHash = buf.Bytes32()
 	obj.NumBlocksOverflow = buf.Uint8()
@@ -267,7 +267,6 @@ func SubEpochSummaryFromBytes(buf *utils.ParseBuf) (obj SubEpochSummary) {
 	if flag := buf.Bool(); buf.Err() == nil && flag {
 		obj.NewSubSlotIters = buf.Uint64()
 	}
-	return
 }
 
 func (obj SubEpochSummary) ToBytes(buf *[]byte) {
@@ -292,11 +291,10 @@ type VDFProof struct {
 	NormalizedToIdentity bool
 }
 
-func VDFProofFromBytes(buf *utils.ParseBuf) (obj VDFProof) {
+func (obj *VDFProof) FromBytes(buf *utils.ParseBuf) {
 	obj.WitnessType = buf.Uint8()
 	obj.Witness = buf.Bytes()
 	obj.NormalizedToIdentity = buf.Bool()
-	return
 }
 
 func (obj VDFProof) ToBytes(buf *[]byte) {
@@ -312,11 +310,10 @@ type VDFInfo struct {
 	Output             ClassgroupElement
 }
 
-func VDFInfoFromBytes(buf *utils.ParseBuf) (obj VDFInfo) {
+func (obj *VDFInfo) FromBytes(buf *utils.ParseBuf) {
 	obj.Challenge = buf.Bytes32()
 	obj.NumberOfIterations = buf.Uint64()
-	obj.Output = ClassgroupElementFromBytes(buf)
-	return
+	obj.Output.FromBytes(buf)
 }
 
 func (obj VDFInfo) ToBytes(buf *[]byte) {
@@ -336,20 +333,21 @@ type Foliage struct {
 	FoliageTransactionBlockSignature *G2Element
 }
 
-func FoliageFromBytes(buf *utils.ParseBuf) (obj Foliage) {
+func (obj *Foliage) FromBytes(buf *utils.ParseBuf) {
 	obj.PrevBlockHash = buf.Bytes32()
 	obj.RewardBlockHash = buf.Bytes32()
-	obj.FoliageBlockData = FoliageBlockDataFromBytes(buf)
-	obj.FoliageBlockDataSignature = G2ElementFromBytes(buf)
+	obj.FoliageBlockData.FromBytes(buf)
+	obj.FoliageBlockDataSignature.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = buf.Bytes32()
+		var t [32]byte
+		t = buf.Bytes32()
 		obj.FoliageTransactionBlockHash = &t
 	}
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = G2ElementFromBytes(buf)
+		var t G2Element
+		t.FromBytes(buf)
 		obj.FoliageTransactionBlockSignature = &t
 	}
-	return
 }
 
 func (obj Foliage) ToBytes(buf *[]byte) {
@@ -378,14 +376,13 @@ type FoliageTransactionBlock struct {
 	TransactionsInfoHash     [32]byte
 }
 
-func FoliageTransactionBlockFromBytes(buf *utils.ParseBuf) (obj FoliageTransactionBlock) {
+func (obj *FoliageTransactionBlock) FromBytes(buf *utils.ParseBuf) {
 	obj.PrevTransactionBlockHash = buf.Bytes32()
 	obj.Timestamp = buf.Uint64()
 	obj.FilterHash = buf.Bytes32()
 	obj.AdditionsRoot = buf.Bytes32()
 	obj.RemovalsRoot = buf.Bytes32()
 	obj.TransactionsInfoHash = buf.Bytes32()
-	return
 }
 
 func (obj FoliageTransactionBlock) ToBytes(buf *[]byte) {
@@ -407,16 +404,16 @@ type FoliageBlockData struct {
 	ExtensionData [32]byte
 }
 
-func FoliageBlockDataFromBytes(buf *utils.ParseBuf) (obj FoliageBlockData) {
+func (obj *FoliageBlockData) FromBytes(buf *utils.ParseBuf) {
 	obj.UnfinishedRewardBlockHash = buf.Bytes32()
-	obj.PoolTarget = PoolTargetFromBytes(buf)
+	obj.PoolTarget.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = G2ElementFromBytes(buf)
+		var t G2Element
+		t.FromBytes(buf)
 		obj.PoolSignature = &t
 	}
 	obj.FarmerRewardPuzzleHash = buf.Bytes32()
 	obj.ExtensionData = buf.Bytes32()
-	return
 }
 
 func (obj FoliageBlockData) ToBytes(buf *[]byte) {
@@ -445,21 +442,20 @@ type TransactionsInfo struct {
 	RewardClaimsIncorporated []Coin
 }
 
-func TransactionsInfoFromBytes(buf *utils.ParseBuf) (obj TransactionsInfo) {
+func (obj *TransactionsInfo) FromBytes(buf *utils.ParseBuf) {
 	obj.GeneratorRoot = buf.Bytes32()
 	obj.GeneratorRefsRoot = buf.Bytes32()
-	obj.AggregatedSignature = G2ElementFromBytes(buf)
+	obj.AggregatedSignature.FromBytes(buf)
 	obj.Fees = buf.Uint64()
 	obj.Cost = buf.Uint64()
 	len_obj_RewardClaimsIncorporated := buf.Uint32()
 	obj.RewardClaimsIncorporated = make([]Coin, len_obj_RewardClaimsIncorporated)
 	for i := uint32(0); i < len_obj_RewardClaimsIncorporated; i++ {
-		obj.RewardClaimsIncorporated[i] = CoinFromBytes(buf)
+		obj.RewardClaimsIncorporated[i].FromBytes(buf)
 		if buf.Err() != nil {
 			return
 		}
 	}
-	return
 }
 
 func (obj TransactionsInfo) ToBytes(buf *[]byte) {
@@ -494,31 +490,33 @@ type RewardChainBlock struct {
 	IsTransactionBlock         bool
 }
 
-func RewardChainBlockFromBytes(buf *utils.ParseBuf) (obj RewardChainBlock) {
+func (obj *RewardChainBlock) FromBytes(buf *utils.ParseBuf) {
 	obj.Weight = buf.Uint128()
 	obj.Height = buf.Uint32()
 	obj.TotalIters = buf.Uint128()
 	obj.SignagePointIndex = buf.Uint8()
 	obj.PosSsCcChallengeHash = buf.Bytes32()
-	obj.ProofOfSpace = ProofOfSpaceFromBytes(buf)
+	obj.ProofOfSpace.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = VDFInfoFromBytes(buf)
+		var t VDFInfo
+		t.FromBytes(buf)
 		obj.ChallengeChainSpVdf = &t
 	}
-	obj.ChallengeChainSpSignature = G2ElementFromBytes(buf)
-	obj.ChallengeChainIpVdf = VDFInfoFromBytes(buf)
+	obj.ChallengeChainSpSignature.FromBytes(buf)
+	obj.ChallengeChainIpVdf.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = VDFInfoFromBytes(buf)
+		var t VDFInfo
+		t.FromBytes(buf)
 		obj.RewardChainSpVdf = &t
 	}
-	obj.RewardChainSpSignature = G2ElementFromBytes(buf)
-	obj.RewardChainIpVdf = VDFInfoFromBytes(buf)
+	obj.RewardChainSpSignature.FromBytes(buf)
+	obj.RewardChainIpVdf.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = VDFInfoFromBytes(buf)
+		var t VDFInfo
+		t.FromBytes(buf)
 		obj.InfusedChallengeChainIpVdf = &t
 	}
 	obj.IsTransactionBlock = buf.Bool()
-	return
 }
 
 func (obj RewardChainBlock) ToBytes(buf *[]byte) {
@@ -562,14 +560,16 @@ type ChallengeChainSubSlot struct {
 	NewDifficulty uint64
 }
 
-func ChallengeChainSubSlotFromBytes(buf *utils.ParseBuf) (obj ChallengeChainSubSlot) {
-	obj.ChallengeChainEndOfSlotVdf = VDFInfoFromBytes(buf)
+func (obj *ChallengeChainSubSlot) FromBytes(buf *utils.ParseBuf) {
+	obj.ChallengeChainEndOfSlotVdf.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = buf.Bytes32()
+		var t [32]byte
+		t = buf.Bytes32()
 		obj.InfusedChallengeChainSubSlotHash = &t
 	}
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = buf.Bytes32()
+		var t [32]byte
+		t = buf.Bytes32()
 		obj.SubepochSummaryHash = &t
 	}
 	if flag := buf.Bool(); buf.Err() == nil && flag {
@@ -578,7 +578,6 @@ func ChallengeChainSubSlotFromBytes(buf *utils.ParseBuf) (obj ChallengeChainSubS
 	if flag := buf.Bool(); buf.Err() == nil && flag {
 		obj.NewDifficulty = buf.Uint64()
 	}
-	return
 }
 
 func (obj ChallengeChainSubSlot) ToBytes(buf *[]byte) {
@@ -609,9 +608,8 @@ type InfusedChallengeChainSubSlot struct {
 	InfusedChallengeChainEndOfSlotVdf VDFInfo
 }
 
-func InfusedChallengeChainSubSlotFromBytes(buf *utils.ParseBuf) (obj InfusedChallengeChainSubSlot) {
-	obj.InfusedChallengeChainEndOfSlotVdf = VDFInfoFromBytes(buf)
-	return
+func (obj *InfusedChallengeChainSubSlot) FromBytes(buf *utils.ParseBuf) {
+	obj.InfusedChallengeChainEndOfSlotVdf.FromBytes(buf)
 }
 
 func (obj InfusedChallengeChainSubSlot) ToBytes(buf *[]byte) {
@@ -627,15 +625,15 @@ type RewardChainSubSlot struct {
 	Deficit uint8
 }
 
-func RewardChainSubSlotFromBytes(buf *utils.ParseBuf) (obj RewardChainSubSlot) {
-	obj.EndOfSlotVdf = VDFInfoFromBytes(buf)
+func (obj *RewardChainSubSlot) FromBytes(buf *utils.ParseBuf) {
+	obj.EndOfSlotVdf.FromBytes(buf)
 	obj.ChallengeChainSubSlotHash = buf.Bytes32()
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = buf.Bytes32()
+		var t [32]byte
+		t = buf.Bytes32()
 		obj.InfusedChallengeChainSubSlotHash = &t
 	}
 	obj.Deficit = buf.Uint8()
-	return
 }
 
 func (obj RewardChainSubSlot) ToBytes(buf *[]byte) {
@@ -656,14 +654,14 @@ type SubSlotProofs struct {
 	RewardChainSlotProof           VDFProof
 }
 
-func SubSlotProofsFromBytes(buf *utils.ParseBuf) (obj SubSlotProofs) {
-	obj.ChallengeChainSlotProof = VDFProofFromBytes(buf)
+func (obj *SubSlotProofs) FromBytes(buf *utils.ParseBuf) {
+	obj.ChallengeChainSlotProof.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = VDFProofFromBytes(buf)
+		var t VDFProof
+		t.FromBytes(buf)
 		obj.InfusedChallengeChainSlotProof = &t
 	}
-	obj.RewardChainSlotProof = VDFProofFromBytes(buf)
-	return
+	obj.RewardChainSlotProof.FromBytes(buf)
 }
 
 func (obj SubSlotProofs) ToBytes(buf *[]byte) {
@@ -682,10 +680,9 @@ type PoolTarget struct {
 	MaxHeight uint32
 }
 
-func PoolTargetFromBytes(buf *utils.ParseBuf) (obj PoolTarget) {
+func (obj *PoolTarget) FromBytes(buf *utils.ParseBuf) {
 	obj.PuzzleHash = buf.Bytes32()
 	obj.MaxHeight = buf.Uint32()
-	return
 }
 
 func (obj PoolTarget) ToBytes(buf *[]byte) {
@@ -704,20 +701,21 @@ type ProofOfSpace struct {
 	Proof                  []byte
 }
 
-func ProofOfSpaceFromBytes(buf *utils.ParseBuf) (obj ProofOfSpace) {
+func (obj *ProofOfSpace) FromBytes(buf *utils.ParseBuf) {
 	obj.Challenge = buf.Bytes32()
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = G1ElementFromBytes(buf)
+		var t G1Element
+		t.FromBytes(buf)
 		obj.PoolPublicKey = &t
 	}
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = buf.Bytes32()
+		var t [32]byte
+		t = buf.Bytes32()
 		obj.PoolContractPuzzleHash = &t
 	}
-	obj.PlotPublicKey = G1ElementFromBytes(buf)
+	obj.PlotPublicKey.FromBytes(buf)
 	obj.Size = buf.Uint8()
 	obj.Proof = buf.Bytes()
-	return
 }
 
 func (obj ProofOfSpace) ToBytes(buf *[]byte) {
@@ -762,41 +760,47 @@ type FullBlock struct {
 	TransactionsGeneratorRefList []uint32
 }
 
-func FullBlockFromBytes(buf *utils.ParseBuf) (obj FullBlock) {
+func (obj *FullBlock) FromBytes(buf *utils.ParseBuf) {
 	len_obj_FinishedSubSlots := buf.Uint32()
 	obj.FinishedSubSlots = make([]EndOfSubSlotBundle, len_obj_FinishedSubSlots)
 	for i := uint32(0); i < len_obj_FinishedSubSlots; i++ {
-		obj.FinishedSubSlots[i] = EndOfSubSlotBundleFromBytes(buf)
+		obj.FinishedSubSlots[i].FromBytes(buf)
 		if buf.Err() != nil {
 			return
 		}
 	}
-	obj.RewardChainBlock = RewardChainBlockFromBytes(buf)
+	obj.RewardChainBlock.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = VDFProofFromBytes(buf)
+		var t VDFProof
+		t.FromBytes(buf)
 		obj.ChallengeChainSpProof = &t
 	}
-	obj.ChallengeChainIpProof = VDFProofFromBytes(buf)
+	obj.ChallengeChainIpProof.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = VDFProofFromBytes(buf)
+		var t VDFProof
+		t.FromBytes(buf)
 		obj.RewardChainSpProof = &t
 	}
-	obj.RewardChainIpProof = VDFProofFromBytes(buf)
+	obj.RewardChainIpProof.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = VDFProofFromBytes(buf)
+		var t VDFProof
+		t.FromBytes(buf)
 		obj.InfusedChallengeChainIpProof = &t
 	}
-	obj.Foliage = FoliageFromBytes(buf)
+	obj.Foliage.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = FoliageTransactionBlockFromBytes(buf)
+		var t FoliageTransactionBlock
+		t.FromBytes(buf)
 		obj.FoliageTransactionBlock = &t
 	}
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = TransactionsInfoFromBytes(buf)
+		var t TransactionsInfo
+		t.FromBytes(buf)
 		obj.TransactionsInfo = &t
 	}
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = SerializedProgramFromBytes(buf)
+		var t SerializedProgram
+		t.FromBytes(buf)
 		obj.TransactionsGenerator = &t
 	}
 	len_obj_TransactionsGeneratorRefList := buf.Uint32()
@@ -807,7 +811,6 @@ func FullBlockFromBytes(buf *utils.ParseBuf) (obj FullBlock) {
 			return
 		}
 	}
-	return
 }
 
 func (obj FullBlock) ToBytes(buf *[]byte) {
@@ -863,15 +866,15 @@ type EndOfSubSlotBundle struct {
 	Proofs                SubSlotProofs
 }
 
-func EndOfSubSlotBundleFromBytes(buf *utils.ParseBuf) (obj EndOfSubSlotBundle) {
-	obj.ChallengeChain = ChallengeChainSubSlotFromBytes(buf)
+func (obj *EndOfSubSlotBundle) FromBytes(buf *utils.ParseBuf) {
+	obj.ChallengeChain.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		var t = InfusedChallengeChainSubSlotFromBytes(buf)
+		var t InfusedChallengeChainSubSlot
+		t.FromBytes(buf)
 		obj.InfusedChallengeChain = &t
 	}
-	obj.RewardChain = RewardChainSubSlotFromBytes(buf)
-	obj.Proofs = SubSlotProofsFromBytes(buf)
-	return
+	obj.RewardChain.FromBytes(buf)
+	obj.Proofs.FromBytes(buf)
 }
 
 func (obj EndOfSubSlotBundle) ToBytes(buf *[]byte) {
@@ -893,13 +896,12 @@ type Message struct {
 	Data []byte
 }
 
-func MessageFromBytes(buf *utils.ParseBuf) (obj Message) {
+func (obj *Message) FromBytes(buf *utils.ParseBuf) {
 	obj.Type = buf.Uint8()
 	if flag := buf.Bool(); buf.Err() == nil && flag {
 		obj.ID = buf.Uint16()
 	}
 	obj.Data = buf.Bytes()
-	return
 }
 
 func (obj Message) ToBytes(buf *[]byte) {
@@ -921,7 +923,7 @@ type Handshake struct {
 	Capabilities    []TupleUint16Str
 }
 
-func HandshakeFromBytes(buf *utils.ParseBuf) (obj Handshake) {
+func (obj *Handshake) FromBytes(buf *utils.ParseBuf) {
 	obj.NetworkID = buf.String()
 	obj.ProtocolVersion = buf.String()
 	obj.SoftwareVersion = buf.String()
@@ -930,12 +932,11 @@ func HandshakeFromBytes(buf *utils.ParseBuf) (obj Handshake) {
 	len_obj_Capabilities := buf.Uint32()
 	obj.Capabilities = make([]TupleUint16Str, len_obj_Capabilities)
 	for i := uint32(0); i < len_obj_Capabilities; i++ {
-		obj.Capabilities[i] = TupleUint16StrFromBytes(buf)
+		obj.Capabilities[i].FromBytes(buf)
 		if buf.Err() != nil {
 			return
 		}
 	}
-	return
 }
 
 func (obj Handshake) ToBytes(buf *[]byte) {
@@ -957,10 +958,9 @@ type TupleUint16Str struct {
 	V1 string
 }
 
-func TupleUint16StrFromBytes(buf *utils.ParseBuf) (obj TupleUint16Str) {
+func (obj *TupleUint16Str) FromBytes(buf *utils.ParseBuf) {
 	obj.V0 = buf.Uint16()
 	obj.V1 = buf.String()
-	return
 }
 
 func (obj TupleUint16Str) ToBytes(buf *[]byte) {
@@ -972,9 +972,8 @@ func (obj TupleUint16Str) ToBytes(buf *[]byte) {
 
 type G1Element struct{ Bytes []byte }
 
-func G1ElementFromBytes(buf *utils.ParseBuf) (obj G1Element) {
+func (obj *G1Element) FromBytes(buf *utils.ParseBuf) {
 	obj.Bytes = buf.BytesN(48)
-	return
 }
 func (obj G1Element) ToBytes(buf *[]byte) {
 	utils.BytesWOSizeToBytes(buf, obj.Bytes)
@@ -982,9 +981,8 @@ func (obj G1Element) ToBytes(buf *[]byte) {
 
 type G2Element struct{ Bytes []byte }
 
-func G2ElementFromBytes(buf *utils.ParseBuf) (obj G2Element) {
+func (obj *G2Element) FromBytes(buf *utils.ParseBuf) {
 	obj.Bytes = buf.BytesN(96)
-	return
 }
 func (obj G2Element) ToBytes(buf *[]byte) {
 	utils.BytesWOSizeToBytes(buf, obj.Bytes)

@@ -28,11 +28,9 @@ func BlockRecordFromRow(rows Scanner) (*types.BlockRecord, error) {
 	if err != nil {
 		return nil, merry.Wrap(err)
 	}
-	buf := utils.NewParseBuf(blockBytes)
-	br := types.BlockRecordFromBytes(buf)
-	buf.EnsureEmpty()
-	if buf.Err() != nil {
-		return nil, buf.Err()
+	var br types.BlockRecord
+	if err := utils.FromByteSliceExact(blockBytes, &br); err != nil {
+		return nil, merry.Wrap(err)
 	}
 	return &br, nil
 }
@@ -47,11 +45,9 @@ func FullBlockFromRow(row Scanner) (*types.FullBlock, error) {
 	if err := row.Scan(&blockBytes); err != nil {
 		return nil, merry.Wrap(err)
 	}
-	buf := utils.NewParseBuf(blockBytes)
-	block := types.FullBlockFromBytes(buf)
-	buf.EnsureEmpty()
-	if buf.Err() != nil {
-		return nil, buf.Err()
+	var block types.FullBlock
+	if err := utils.FromByteSliceExact(blockBytes, &block); err != nil {
+		return nil, merry.Wrap(err)
 	}
 	return &block, nil
 }

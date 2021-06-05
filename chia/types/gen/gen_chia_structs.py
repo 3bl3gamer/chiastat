@@ -122,7 +122,7 @@ def make_parse_func_call(attr_name, ann_items):
     base = ''.join([cap_first(make_type_name(x)) for x in ann_items])
     if base in buf_func_names:
         return f'{attr_name} = buf.{base}()'
-    return f'{attr_name} = {base}FromBytes(buf)'
+    return f'{attr_name}.FromBytes(buf)'
 
 def make_serialize_func_call(attr_name, ann_items):
     base = ''.join([cap_first(make_type_name(x)) for x in ann_items])
@@ -153,7 +153,8 @@ def make_type_parse(name, ann_items, need_err_check=False):
     elif ann_items[0] == 'Optional':
         res += f'if flag := buf.Bool(); buf.Err() == nil && flag {{ \n'
         if type_option_is_ref(ann_items[1]):
-            res += f'{make_type_parse("var t", ann_items[1:])}'
+            res += f'var t {make_type_def(ann_items[1:])}\n'
+            res += f'{make_type_parse("t", ann_items[1:])}'
             res += f'{name} = &t\n'
         else:
             res += f'{make_type_parse(name, ann_items[1:])}'
@@ -237,10 +238,9 @@ def make_struct_def(struct_def_data):
     def_text += '}\n'
 
     # from bytes
-    parse_text = f'func {struct_name}FromBytes(buf *utils.ParseBuf) (obj {struct_name}) {{\n'
+    parse_text = f'func (obj *{struct_name}) FromBytes(buf *utils.ParseBuf) {{\n'
     for (name, ann_items, attr_docstring) in attrs:
         parse_text += make_type_parse('obj.' + to_attr_name(name), ann_items)
-    parse_text += f'return\n'
     parse_text += '}\n'
 
     # to bytes
@@ -312,8 +312,8 @@ with open(out_fname, 'w') as f:
     f.write(f'\n\n// === Dummy ===\n\n')
     for dummy_name, dummy_size in [('G1Element', 48), ('G2Element', 96)]:
         f.write(f'\ntype {dummy_name} struct {{Bytes []byte}}')
-        f.write(f'\nfunc {dummy_name}FromBytes(buf *utils.ParseBuf) (obj {dummy_name}) {{')
-        f.write(f'\nobj.Bytes = buf.BytesN({dummy_size}); return')
+        f.write(f'\nfunc (obj *{dummy_name}) FromBytes(buf *utils.ParseBuf) {{')
+        f.write(f'\nobj.Bytes = buf.BytesN({dummy_size})')
         f.write(f'\n}}')
         f.write(f'\nfunc (obj {dummy_name}) ToBytes(buf *[]byte) {{')
         f.write(f'\nutils.BytesWOSizeToBytes(buf, obj.Bytes)')
