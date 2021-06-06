@@ -3,7 +3,6 @@ package main
 import (
 	"chiastat/chia"
 	"chiastat/chia/network"
-	"chiastat/chia/types"
 	"chiastat/nodes"
 	"chiastat/utils"
 	"flag"
@@ -147,14 +146,9 @@ func CMDRequestPeers() error {
 	}
 
 	c.StartRoutines()
-	respChan, err := c.Send(types.MSG_REQUEST_PEERS, types.RequestPeers{})
+	peers, err := c.RequestPeers()
 	if err != nil {
 		return merry.Wrap(err)
-	}
-	res := <-respChan
-	peers, ok := res.(*types.RespondPeers)
-	if !ok {
-		return merry.Errorf("unexpected response type: #T", res)
 	}
 
 	for i, peer := range peers.PeerList {
