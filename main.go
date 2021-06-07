@@ -7,6 +7,7 @@ import (
 	"chiastat/utils"
 	"flag"
 	"fmt"
+	"log"
 	"math/big"
 	"os"
 	"strings"
@@ -117,6 +118,7 @@ func CMDHandshake() error {
 		return merry.Wrap(err)
 	}
 
+	fmt.Printf("node ID: %s\n", c.PeerIDHex())
 	fmt.Printf("handshake response: %#v\n", hs)
 	return nil
 }
@@ -151,6 +153,7 @@ func CMDRequestPeers() error {
 		return merry.Wrap(err)
 	}
 
+	fmt.Printf("node ID: %s\n", c.PeerIDHex())
 	for i, peer := range peers.PeerList {
 		stamp := time.Unix(int64(peer.Timestamp), 0).Format("2006-01-02 15:04:05 NST")
 		fmt.Printf("#%d\t%s\t%d\t%s\n", i, peer.Host, peer.Port, stamp)
@@ -160,17 +163,45 @@ func CMDRequestPeers() error {
 	return nil
 }
 
+func CMDListenIncoming() error {
+	sslDir := flag.String("ssl-dir", utils.HomeDirOrEmpty("/.chia/mainnet/ssl"), "path to chia/mainnet/ssl directory")
+	flag.Parse()
+
+	connHandler := func(c *network.WSChiaConnection) {
+		fmt.Println("new connection from:", c.PeerIDHex())
+		defer c.Close()
+
+		if _, err := c.PerformHandshake(); err != nil {
+			log.Printf("handshake error: %s", err)
+			return
+		}
+
+		c.StartRoutines()
+		peers, err := c.RequestPeers()
+		if err != nil {
+			log.Printf("peers error: %s", err)
+			return
+		}
+
+		fmt.Println("total peers:", len(peers.PeerList))
+	}
+
+	err := network.ListenOn("0.0.0.0", *sslDir+"/ca/chia_ca.crt", *sslDir+"/ca/chia_ca.key", connHandler)
+	return merry.Wrap(err)
+}
+
 var commands = map[string]func() error{
-	"listen-nodes":  nodes.CMDListenNodes,
-	"update-nodes":  nodes.CMDUpdateNodes,
-	"import-nodes":  nodes.CMDImportNodes,
-	"save-stats":    nodes.CMDSaveStats,
-	"estimate-size": CMDEstimateSize,
-	"size-chart":    CMDSizeChart,
-	"export-blocks": CMDExportBlocks,
-	"eval-block":    CMDEvalBlock,
-	"handshake":     CMDHandshake,
-	"request-peers": CMDRequestPeers,
+	"listen-nodes":    nodes.CMDListenNodes,
+	"update-nodes":    nodes.CMDUpdateNodes,
+	"import-nodes":    nodes.CMDImportNodes,
+	"save-stats":      nodes.CMDSaveStats,
+	"estimate-size":   CMDEstimateSize,
+	"size-chart":      CMDSizeChart,
+	"export-blocks":   CMDExportBlocks,
+	"eval-block":      CMDEvalBlock,
+	"handshake":       CMDHandshake,
+	"request-peers":   CMDRequestPeers,
+	"listen-incoming": CMDListenIncoming,
 }
 
 func printUsage() {

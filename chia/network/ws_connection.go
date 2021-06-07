@@ -6,9 +6,12 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"log"
+	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 const NETWORK_ID = "mainnet"
 const PROTOCOL_VERSION = "0.0.32"
 const SOFTWARE_VERSION = "1.1.6"
+const SERVER_PORT = 8445
 
 func MakeTSLConfigFromFiles(caCertPath, nodeCertPath, nodeKeyPath string) (*tls.Config, error) {
 	caCertBuf, err := os.ReadFile(caCertPath)
@@ -83,6 +87,24 @@ func MakeTSLConfig(rootCAs *x509.CertPool, nodeCert tls.Certificate) *tls.Config
 	}
 }
 
+func ensureBinaryMessage(msgType int) error {
+	if msgType != websocket.BinaryMessage {
+		return merry.Errorf("unexpected WS mesage type: expected binary(%d), got %d",
+			websocket.BinaryMessage, msgType)
+	}
+	return nil
+}
+func readBinaryMessage(ws *websocket.Conn) ([]byte, error) {
+	msgType, buf, err := ws.ReadMessage()
+	if err != nil {
+		return nil, merry.Wrap(err)
+	}
+	if err := ensureBinaryMessage(msgType); err != nil {
+		return nil, merry.Wrap(err)
+	}
+	return buf, nil
+}
+
 type Result struct {
 	Data utils.FromBytes
 	Err  error
@@ -99,73 +121,147 @@ type WSChiaConnection struct {
 	mutex            *sync.Mutex
 }
 
+func NewWSChiaConnection(ws *websocket.Conn, isOutbound bool) *WSChiaConnection {
+	certs := ws.UnderlyingConn().(*tls.Conn).ConnectionState().PeerCertificates
+	peerID := sha256.Sum256(certs[0].Raw)
+
+	return &WSChiaConnection{
+		peerID:          peerID,
+		ws:              ws,
+		isOutbound:      isOutbound,
+		pendingRequests: make(map[uint16]chan Result),
+		mutex:           &sync.Mutex{},
+	}
+}
+
 func ConnectTo(tlsConfig *tls.Config, address string) (*WSChiaConnection, error) {
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 5 * time.Second,
 		TLSClientConfig:  tlsConfig,
 	}
 
-	c, _, err := dialer.Dial("wss://"+address+"/ws", nil)
+	ws, _, err := dialer.Dial("wss://"+address+"/ws", nil)
 	if err != nil {
 		return nil, merry.Wrap(err)
 	}
 
-	certs := c.UnderlyingConn().(*tls.Conn).ConnectionState().PeerCertificates
-	peerID := sha256.Sum256(certs[0].Raw)
-
-	return &WSChiaConnection{
-		peerID:          peerID,
-		ws:              c,
-		isOutbound:      true,
-		pendingRequests: make(map[uint16]chan Result),
-		mutex:           &sync.Mutex{},
-	}, nil
+	return NewWSChiaConnection(ws, true), nil
 }
 
+func ListenOn(addr, certFilePath, keyFilePath string, handler func(*WSChiaConnection)) error {
+	upgrader := websocket.Upgrader{}
+
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		ws, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Print("WARN: upgrade failed:", err)
+			return
+		}
+		defer ws.Close()
+
+		handler(NewWSChiaConnection(ws, false))
+	})
+
+	server := &http.Server{
+		Addr: addr + ":" + strconv.Itoa(SERVER_PORT),
+		TLSConfig: &tls.Config{
+			ClientAuth: tls.RequireAnyClientCert,
+		},
+	}
+	err := server.ListenAndServeTLS(certFilePath, keyFilePath)
+	return merry.Wrap(err)
+}
+
+func (c WSChiaConnection) PeerID() [32]byte {
+	return c.peerID
+}
+func (c WSChiaConnection) PeerIDHex() string {
+	return hex.EncodeToString(c.peerID[:])
+}
+
+// https://github.com/Chia-Network/chia-blockchain/blob/latest/chia/server/ws_connection.py#L106
 func (c WSChiaConnection) PerformHandshake() (*types.Handshake, error) {
-	msgOut := types.Message{
-		Type: types.MSG_HANDSHAKE,
-		Data: utils.ToByteSlice(types.Handshake{
-			NetworkID:       NETWORK_ID,
-			ProtocolVersion: PROTOCOL_VERSION,
-			SoftwareVersion: SOFTWARE_VERSION,
-			ServerPort:      8444,
-			NodeType:        types.NODE_FULL,
-			Capabilities:    []types.TupleUint16Str{{V0: types.CAP_BASE, V1: "1"}},
-		}),
-	}
+	if c.isOutbound {
+		msgOut := types.Message{
+			Type: types.MSG_HANDSHAKE,
+			Data: utils.ToByteSlice(types.Handshake{
+				NetworkID:       NETWORK_ID,
+				ProtocolVersion: PROTOCOL_VERSION,
+				SoftwareVersion: SOFTWARE_VERSION,
+				ServerPort:      SERVER_PORT,
+				NodeType:        types.NODE_FULL,
+				Capabilities:    []types.TupleUint16Str{{V0: types.CAP_BASE, V1: "1"}},
+			}),
+		}
+		err := c.ws.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msgOut))
+		if err != nil {
+			return nil, merry.Wrap(err)
+		}
 
-	err := c.ws.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msgOut))
-	if err != nil {
-		return nil, merry.Wrap(err)
-	}
+		buf, err := readBinaryMessage(c.ws)
+		if err != nil {
+			return nil, merry.Wrap(err)
+		}
 
-	msgType, buf, err := c.ws.ReadMessage()
-	if err != nil {
-		return nil, merry.Wrap(err)
-	}
+		var msgIn types.Message
+		if err := utils.FromByteSliceExact(buf, &msgIn); err != nil {
+			return nil, merry.Wrap(err)
+		}
+		if msgIn.Type != types.MSG_HANDSHAKE {
+			return nil, merry.Errorf("unexpected message type: expected handshake(%d), got %d",
+				types.MSG_HANDSHAKE, msgIn.Type)
+		}
 
-	if msgType != websocket.BinaryMessage {
-		return nil, merry.Errorf("unexpected WS mesage type: expected binary(%d), got %d",
-			websocket.BinaryMessage, msgType)
-	}
+		var hs types.Handshake
+		if err := utils.FromByteSliceExact(msgIn.Data, &hs); err != nil {
+			return nil, merry.Wrap(err)
+		}
+		if hs.NetworkID != NETWORK_ID {
+			return nil, merry.Errorf("unexpected network ID: expected %s, got %s",
+				NETWORK_ID, hs.NetworkID)
+		}
+		return &hs, nil
+	} else {
+		buf, err := readBinaryMessage(c.ws)
+		if err != nil {
+			return nil, merry.Wrap(err)
+		}
 
-	var msgIn types.Message
-	if err := utils.FromByteSliceExact(buf, &msgIn); err != nil {
-		return nil, merry.Wrap(err)
-	}
+		var msgIn types.Message
+		if err := utils.FromByteSliceExact(buf, &msgIn); err != nil {
+			return nil, merry.Wrap(err)
+		}
+		if msgIn.Type != types.MSG_HANDSHAKE {
+			return nil, merry.Errorf("unexpected message type: expected handshake(%d), got %d",
+				types.MSG_HANDSHAKE, msgIn.Type)
+		}
 
-	if msgIn.Type != types.MSG_HANDSHAKE {
-		return nil, merry.Errorf("unexpected message type: expected handshake(%d), got %d",
-			types.MSG_HANDSHAKE, msgIn.Type)
-	}
+		var hs types.Handshake
+		if err := utils.FromByteSliceExact(msgIn.Data, &hs); err != nil {
+			return nil, merry.Wrap(err)
+		}
+		if hs.NetworkID != NETWORK_ID {
+			return nil, merry.Errorf("unexpected network ID: expected %s, got %s",
+				NETWORK_ID, hs.NetworkID)
+		}
 
-	var hs types.Handshake
-	if err := utils.FromByteSliceExact(msgIn.Data, &hs); err != nil {
-		return nil, merry.Wrap(err)
+		msgOut := types.Message{
+			Type: types.MSG_HANDSHAKE,
+			Data: utils.ToByteSlice(types.Handshake{
+				NetworkID:       NETWORK_ID,
+				ProtocolVersion: PROTOCOL_VERSION,
+				SoftwareVersion: SOFTWARE_VERSION,
+				ServerPort:      SERVER_PORT,
+				NodeType:        types.NODE_FULL,
+				Capabilities:    []types.TupleUint16Str{{V0: types.CAP_BASE, V1: "1"}},
+			}),
+		}
+		err = c.ws.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msgOut))
+		if err != nil {
+			return nil, merry.Wrap(err)
+		}
+		return &hs, nil
 	}
-
-	return &hs, nil
 }
 
 func (c *WSChiaConnection) StartRoutines() {
@@ -191,19 +287,17 @@ func (c *WSChiaConnection) CloseWithErr(err error) {
 	}
 }
 
+func (c *WSChiaConnection) Close() {
+	c.CloseWithErr(merry.Errorf("normal close"))
+}
+
 func (c *WSChiaConnection) readRoutine() {
 	for {
 		if c.closeErr != nil {
 			break
 		}
-		msgType, buf, err := c.ws.ReadMessage()
+		buf, err := readBinaryMessage(c.ws)
 		if err != nil {
-			c.CloseWithErr(err)
-			break
-		}
-		if msgType != websocket.BinaryMessage {
-			err := merry.Errorf("WARN: unexpected WS mesage type: expected binary(%d), got %d",
-				websocket.BinaryMessage, msgType)
 			c.CloseWithErr(err)
 			break
 		}
