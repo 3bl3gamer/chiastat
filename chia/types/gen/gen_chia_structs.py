@@ -132,7 +132,9 @@ def make_serialize_func_call(attr_name, ann_items):
 
 def make_none_option_check(attr_name, ann_items):
     t = ann_items[1]
-    if t.startswith('uint'):
+    if t == 'uint128':
+        return f'{attr_name} == nil'
+    elif t.startswith('uint'):
         return f'{attr_name} == 0'
     elif t == 'List':
         return f'len({attr_name}) == 0'
@@ -257,62 +259,80 @@ def make_tuple_def(tup_items):
     return make_struct_def({'struct_name': name, 'docstring': None, 'attrs': attrs})
 
 
-source_classes = {
-    'consensus/block_record.py': ['BlockRecord'],
-    'types/blockchain_format/coin.py': ['Coin'],
-    'types/blockchain_format/classgroup.py': ['ClassgroupElement'],
-    'types/blockchain_format/sub_epoch_summary.py': ['SubEpochSummary'],
-    'types/blockchain_format/vdf.py': ['VDFProof', 'VDFInfo'],
-    'types/blockchain_format/foliage.py': ['Foliage', 'FoliageTransactionBlock', 'FoliageBlockData', 'TransactionsInfo'],
-    'types/blockchain_format/reward_chain_block.py': ['RewardChainBlock'],
-    'types/blockchain_format/slots.py': ['ChallengeChainSubSlot', 'InfusedChallengeChainSubSlot', 'RewardChainSubSlot', 'SubSlotProofs'],
-    'types/blockchain_format/pool_target.py': ['PoolTarget'],
-    'types/blockchain_format/proof_of_space.py': ['ProofOfSpace'],
-    'types/full_block.py': ['FullBlock'],
-    'types/end_of_slot_bundle.py': ['EndOfSubSlotBundle'],
-    # ===
-    'server/outbound_message.py': ['Message'],
-    'protocols/shared_protocol.py': ['Handshake'],
-    'protocols/full_node_protocol.py': [
-        'NewPeak',
-        # 'NewTransaction', 'RequestTransaction', 'RespondTransaction',
-        # 'RequestProofOfWeight', 'RespondProofOfWeight',
-        # 'RequestBlock', 'RejectBlock', 'RequestBlocks', 'RespondBlocks', 'RejectBlocks', 'RespondBlock',
-        # 'NewUnfinishedBlock', 'RequestUnfinishedBlock', 'RespondUnfinishedBlock',
-        # 'NewSignagePointOrEndOfSubSlot', 'RequestSignagePointOrEndOfSubSlot', 'RespondSignagePoint', 'RespondEndOfSubSlot',
-        'RequestMempoolTransactions',
-        # 'NewCompactVDF', 'RequestCompactVDF', 'RespondCompactVDF',
-        'RequestPeers', 'RespondPeers',
-    ],
-    'types/peer_info.py': ['TimestampedPeerInfo'],
+source_classes_groups = {
+    'blockchain': {
+        'consensus/block_record.py': ['BlockRecord'],
+        'types/blockchain_format/coin.py': ['Coin'],
+        'types/blockchain_format/classgroup.py': ['ClassgroupElement'],
+        'types/blockchain_format/sub_epoch_summary.py': ['SubEpochSummary'],
+        'types/blockchain_format/vdf.py': ['VDFProof', 'VDFInfo'],
+        'types/blockchain_format/foliage.py': ['Foliage', 'FoliageTransactionBlock', 'FoliageBlockData', 'TransactionsInfo'],
+        'types/blockchain_format/reward_chain_block.py': ['RewardChainBlock', 'RewardChainBlockUnfinished'],
+        'types/blockchain_format/slots.py': ['ChallengeChainSubSlot', 'InfusedChallengeChainSubSlot', 'RewardChainSubSlot', 'SubSlotProofs'],
+        'types/blockchain_format/pool_target.py': ['PoolTarget'],
+        'types/blockchain_format/proof_of_space.py': ['ProofOfSpace'],
+        'types/full_block.py': ['FullBlock'],
+        'types/end_of_slot_bundle.py': ['EndOfSubSlotBundle'],
+        'types/header_block.py': ['HeaderBlock'],
+        'types/weight_proof.py': ['WeightProof', 'SubEpochData', 'SubEpochChallengeSegment', 'SubSlotData'],
+        'types/spend_bundle.py': ['SpendBundle'],
+        'types/coin_solution.py': ['CoinSolution'],
+        'types/unfinished_block.py': ['UnfinishedBlock'],
+        'types/peer_info.py': ['TimestampedPeerInfo'],
+    },
+    'network': {
+        'server/outbound_message.py': ['Message'],
+        'protocols/shared_protocol.py': ['Handshake'],
+        'protocols/full_node_protocol.py': [
+            'NewPeak',
+            'NewTransaction', 'RequestTransaction', 'RespondTransaction',
+            'RequestProofOfWeight', 'RespondProofOfWeight',
+            'RequestBlock', 'RejectBlock', 'RequestBlocks', 'RespondBlocks', 'RejectBlocks', 'RespondBlock',
+            'NewUnfinishedBlock', 'RequestUnfinishedBlock', 'RespondUnfinishedBlock',
+            'NewSignagePointOrEndOfSubSlot', 'RequestSignagePointOrEndOfSubSlot', 'RespondSignagePoint', 'RespondEndOfSubSlot',
+            'RequestMempoolTransactions',
+            'NewCompactVDF', 'RequestCompactVDF', 'RespondCompactVDF',
+            'RequestPeers', 'RespondPeers',
+        ],
+    }
 }
 
-modules = []
-for path, classes in source_classes.items():
-    url = 'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/' + path
-    text = urllib.request.urlopen(url).read().decode('utf-8')
-    modules.append({
-        'source_lines': text.split('\n'),
-        'ast': ast.parse(text),
-        'class_names': classes
-    })
+module_groups = {}
+for group_name, source_classes in source_classes_groups.items():
+    modules = []
+    for path, classes in source_classes.items():
+        url = 'https://raw.githubusercontent.com/Chia-Network/chia-blockchain/latest/chia/' + path
+        text = urllib.request.urlopen(url).read().decode('utf-8')
+        modules.append({
+            'source_lines': text.split('\n'),
+            'ast': ast.parse(text),
+            'class_names': classes
+        })
+    module_groups[group_name] = modules
 
-out_fname = workdir + '/structs_generated.go'
+tuples = []
+for group_name, modules in module_groups.items():
+    fname = f'{workdir}/{group_name}_generated.go'
+    with open(fname, 'w') as f:
+        imports = ["math/big", "chiastat/chia/utils"]
+        if DEBUG:
+            imports.append("fmt")
+        f.write('// Generated, do not edit.\n')
+        f.write('package types\n\n')
+        f.write('import (\n' + '\n'.join(f'"{x}"' for x in imports) + '\n)\n\n')
 
-with open(out_fname, 'w') as f:
-    imports = ["math/big", "chiastat/chia/utils"]
-    if DEBUG:
-        imports.append("fmt")
+        for module in modules:
+            for class_name in module['class_names']:
+                data = extract_struct_def_data(module['source_lines'], module['ast'], class_name)
+                f.write(make_struct_def(data) + '\n\n')
+                tuples.extend(data['tuples'])
+    os.system('go fmt ' + fname)
+
+fname = f'{workdir}/common_generated.go'
+with open(fname, 'w') as f:
     f.write('// Generated, do not edit.\n')
     f.write('package types\n\n')
-    f.write('import (\n' + '\n'.join(f'"{x}"' for x in imports) + '\n)\n\n')
-
-    tuples = []
-    for module in modules:
-        for class_name in module['class_names']:
-            data = extract_struct_def_data(module['source_lines'], module['ast'], class_name)
-            f.write(make_struct_def(data) + '\n\n')
-            tuples.extend(data['tuples'])
+    f.write('import "chiastat/chia/utils"\n\n')
 
     f.write(f'\n\n// === Tuples ===\n\n')
     processed_tuple_names = set()
@@ -331,6 +351,4 @@ with open(out_fname, 'w') as f:
         f.write(f'\nfunc (obj {dummy_name}) ToBytes(buf *[]byte) {{')
         f.write(f'\nutils.BytesWOSizeToBytes(buf, obj.Bytes)')
         f.write(f'}}\n')
-
-
-os.system('go fmt ' + out_fname)
+os.system('go fmt ' + fname)

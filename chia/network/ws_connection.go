@@ -318,19 +318,12 @@ func (c *WSChiaConnection) processMessageBytes(msgBuf []byte) error {
 	if err := utils.FromByteSliceExact(msgBuf, &msg); err != nil {
 		return merry.Wrap(err)
 	}
-	switch msg.Type {
-	case types.MSG_NEW_PEAK:
-		return c.processMessageOfType(msg, &types.NewPeak{})
-	case types.MSG_REQUEST_PEERS:
-		return c.processMessageOfType(msg, &types.RequestPeers{})
-	case types.MSG_RESPOND_PEERS:
-		return c.processMessageOfType(msg, &types.RespondPeers{})
-	case types.MSG_REQUEST_MEMPOOL_TRANSACTIONS:
-		return c.processMessageOfType(msg, &types.RequestMempoolTransactions{})
-	default:
+	dataStruct, ok := types.MessageTypeStruct(msg.Type)
+	if !ok {
 		log.Printf("WARN: unsupported message type: %d", msg.Type)
 		return nil
 	}
+	return merry.Wrap(c.processMessageOfType(msg, dataStruct))
 }
 
 func (c *WSChiaConnection) processMessageOfType(msg types.Message, data utils.FromBytes) error {

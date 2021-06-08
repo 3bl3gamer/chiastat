@@ -549,6 +549,57 @@ func (obj RewardChainBlock) ToBytes(buf *[]byte) {
 	utils.BoolToBytes(buf, obj.IsTransactionBlock)
 }
 
+type RewardChainBlockUnfinished struct {
+	TotalIters           *big.Int
+	SignagePointIndex    uint8
+	PosSsCcChallengeHash [32]byte
+	ProofOfSpace         ProofOfSpace
+	// (optional) Not present for first sp in slot
+	ChallengeChainSpVdf       *VDFInfo
+	ChallengeChainSpSignature G2Element
+	// (optional) Not present for first sp in slot
+	RewardChainSpVdf       *VDFInfo
+	RewardChainSpSignature G2Element
+}
+
+func (obj *RewardChainBlockUnfinished) FromBytes(buf *utils.ParseBuf) {
+	obj.TotalIters = buf.Uint128()
+	obj.SignagePointIndex = buf.Uint8()
+	obj.PosSsCcChallengeHash = buf.Bytes32()
+	obj.ProofOfSpace.FromBytes(buf)
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFInfo
+		t.FromBytes(buf)
+		obj.ChallengeChainSpVdf = &t
+	}
+	obj.ChallengeChainSpSignature.FromBytes(buf)
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFInfo
+		t.FromBytes(buf)
+		obj.RewardChainSpVdf = &t
+	}
+	obj.RewardChainSpSignature.FromBytes(buf)
+}
+
+func (obj RewardChainBlockUnfinished) ToBytes(buf *[]byte) {
+	utils.Uint128ToBytes(buf, obj.TotalIters)
+	utils.Uint8ToBytes(buf, obj.SignagePointIndex)
+	utils.Bytes32ToBytes(buf, obj.PosSsCcChallengeHash)
+	obj.ProofOfSpace.ToBytes(buf)
+	obj_ChallengeChainSpVdf_isSet := !(obj.ChallengeChainSpVdf == nil)
+	utils.BoolToBytes(buf, obj_ChallengeChainSpVdf_isSet)
+	if obj_ChallengeChainSpVdf_isSet {
+		obj.ChallengeChainSpVdf.ToBytes(buf)
+	}
+	obj.ChallengeChainSpSignature.ToBytes(buf)
+	obj_RewardChainSpVdf_isSet := !(obj.RewardChainSpVdf == nil)
+	utils.BoolToBytes(buf, obj_RewardChainSpVdf_isSet)
+	if obj_RewardChainSpVdf_isSet {
+		obj.RewardChainSpVdf.ToBytes(buf)
+	}
+	obj.RewardChainSpSignature.ToBytes(buf)
+}
+
 type ChallengeChainSubSlot struct {
 	ChallengeChainEndOfSlotVdf VDFInfo
 	// (optional) Only at the end of a slot
@@ -889,134 +940,541 @@ func (obj EndOfSubSlotBundle) ToBytes(buf *[]byte) {
 	obj.Proofs.ToBytes(buf)
 }
 
-type Message struct {
-	// one of ProtocolMessageTypes
-	Type uint8
-	// (optional)
-	ID   uint16
-	Data []byte
+type HeaderBlock struct {
+	// If first sb
+	FinishedSubSlots []EndOfSubSlotBundle
+	// Reward chain trunk data
+	RewardChainBlock RewardChainBlock
+	// (optional) If not first sp in sub-slot
+	ChallengeChainSpProof *VDFProof
+	ChallengeChainIpProof VDFProof
+	// (optional) If not first sp in sub-slot
+	RewardChainSpProof *VDFProof
+	RewardChainIpProof VDFProof
+	// (optional) Iff deficit < 4
+	InfusedChallengeChainIpProof *VDFProof
+	// Reward chain foliage data
+	Foliage Foliage
+	// (optional) Reward chain foliage data (tx block)
+	FoliageTransactionBlock *FoliageTransactionBlock
+	// Filter for block transactions
+	TransactionsFilter []byte
+	// (optional) Reward chain foliage data (tx block additional)
+	TransactionsInfo *TransactionsInfo
 }
 
-func (obj *Message) FromBytes(buf *utils.ParseBuf) {
-	obj.Type = buf.Uint8()
+func (obj *HeaderBlock) FromBytes(buf *utils.ParseBuf) {
+	len_obj_FinishedSubSlots := buf.Uint32()
+	obj.FinishedSubSlots = make([]EndOfSubSlotBundle, len_obj_FinishedSubSlots)
+	for i := uint32(0); i < len_obj_FinishedSubSlots; i++ {
+		obj.FinishedSubSlots[i].FromBytes(buf)
+		if buf.Err() != nil {
+			return
+		}
+	}
+	obj.RewardChainBlock.FromBytes(buf)
 	if flag := buf.Bool(); buf.Err() == nil && flag {
-		obj.ID = buf.Uint16()
+		var t VDFProof
+		t.FromBytes(buf)
+		obj.ChallengeChainSpProof = &t
 	}
-	obj.Data = buf.Bytes()
-}
-
-func (obj Message) ToBytes(buf *[]byte) {
-	utils.Uint8ToBytes(buf, obj.Type)
-	obj_ID_isSet := !(obj.ID == 0)
-	utils.BoolToBytes(buf, obj_ID_isSet)
-	if obj_ID_isSet {
-		utils.Uint16ToBytes(buf, obj.ID)
+	obj.ChallengeChainIpProof.FromBytes(buf)
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFProof
+		t.FromBytes(buf)
+		obj.RewardChainSpProof = &t
 	}
-	utils.BytesToBytes(buf, obj.Data)
+	obj.RewardChainIpProof.FromBytes(buf)
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFProof
+		t.FromBytes(buf)
+		obj.InfusedChallengeChainIpProof = &t
+	}
+	obj.Foliage.FromBytes(buf)
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t FoliageTransactionBlock
+		t.FromBytes(buf)
+		obj.FoliageTransactionBlock = &t
+	}
+	obj.TransactionsFilter = buf.Bytes()
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t TransactionsInfo
+		t.FromBytes(buf)
+		obj.TransactionsInfo = &t
+	}
 }
 
-type Handshake struct {
-	NetworkID       string
-	ProtocolVersion string
-	SoftwareVersion string
-	ServerPort      uint16
-	NodeType        uint8
-	Capabilities    []TupleUint16Str
+func (obj HeaderBlock) ToBytes(buf *[]byte) {
+	utils.Uint32ToBytes(buf, uint32(len(obj.FinishedSubSlots)))
+	for _, item := range obj.FinishedSubSlots {
+		item.ToBytes(buf)
+	}
+	obj.RewardChainBlock.ToBytes(buf)
+	obj_ChallengeChainSpProof_isSet := !(obj.ChallengeChainSpProof == nil)
+	utils.BoolToBytes(buf, obj_ChallengeChainSpProof_isSet)
+	if obj_ChallengeChainSpProof_isSet {
+		obj.ChallengeChainSpProof.ToBytes(buf)
+	}
+	obj.ChallengeChainIpProof.ToBytes(buf)
+	obj_RewardChainSpProof_isSet := !(obj.RewardChainSpProof == nil)
+	utils.BoolToBytes(buf, obj_RewardChainSpProof_isSet)
+	if obj_RewardChainSpProof_isSet {
+		obj.RewardChainSpProof.ToBytes(buf)
+	}
+	obj.RewardChainIpProof.ToBytes(buf)
+	obj_InfusedChallengeChainIpProof_isSet := !(obj.InfusedChallengeChainIpProof == nil)
+	utils.BoolToBytes(buf, obj_InfusedChallengeChainIpProof_isSet)
+	if obj_InfusedChallengeChainIpProof_isSet {
+		obj.InfusedChallengeChainIpProof.ToBytes(buf)
+	}
+	obj.Foliage.ToBytes(buf)
+	obj_FoliageTransactionBlock_isSet := !(obj.FoliageTransactionBlock == nil)
+	utils.BoolToBytes(buf, obj_FoliageTransactionBlock_isSet)
+	if obj_FoliageTransactionBlock_isSet {
+		obj.FoliageTransactionBlock.ToBytes(buf)
+	}
+	utils.BytesToBytes(buf, obj.TransactionsFilter)
+	obj_TransactionsInfo_isSet := !(obj.TransactionsInfo == nil)
+	utils.BoolToBytes(buf, obj_TransactionsInfo_isSet)
+	if obj_TransactionsInfo_isSet {
+		obj.TransactionsInfo.ToBytes(buf)
+	}
 }
 
-func (obj *Handshake) FromBytes(buf *utils.ParseBuf) {
-	obj.NetworkID = buf.String()
-	obj.ProtocolVersion = buf.String()
-	obj.SoftwareVersion = buf.String()
-	obj.ServerPort = buf.Uint16()
-	obj.NodeType = buf.Uint8()
-	len_obj_Capabilities := buf.Uint32()
-	obj.Capabilities = make([]TupleUint16Str, len_obj_Capabilities)
-	for i := uint32(0); i < len_obj_Capabilities; i++ {
-		obj.Capabilities[i].FromBytes(buf)
+type WeightProof struct {
+	SubEpochs []SubEpochData
+	// sampled sub epoch
+	SubEpochSegments []SubEpochChallengeSegment
+	RecentChainData  []HeaderBlock
+}
+
+func (obj *WeightProof) FromBytes(buf *utils.ParseBuf) {
+	len_obj_SubEpochs := buf.Uint32()
+	obj.SubEpochs = make([]SubEpochData, len_obj_SubEpochs)
+	for i := uint32(0); i < len_obj_SubEpochs; i++ {
+		obj.SubEpochs[i].FromBytes(buf)
+		if buf.Err() != nil {
+			return
+		}
+	}
+	len_obj_SubEpochSegments := buf.Uint32()
+	obj.SubEpochSegments = make([]SubEpochChallengeSegment, len_obj_SubEpochSegments)
+	for i := uint32(0); i < len_obj_SubEpochSegments; i++ {
+		obj.SubEpochSegments[i].FromBytes(buf)
+		if buf.Err() != nil {
+			return
+		}
+	}
+	len_obj_RecentChainData := buf.Uint32()
+	obj.RecentChainData = make([]HeaderBlock, len_obj_RecentChainData)
+	for i := uint32(0); i < len_obj_RecentChainData; i++ {
+		obj.RecentChainData[i].FromBytes(buf)
 		if buf.Err() != nil {
 			return
 		}
 	}
 }
 
-func (obj Handshake) ToBytes(buf *[]byte) {
-	utils.StringToBytes(buf, obj.NetworkID)
-	utils.StringToBytes(buf, obj.ProtocolVersion)
-	utils.StringToBytes(buf, obj.SoftwareVersion)
-	utils.Uint16ToBytes(buf, obj.ServerPort)
-	utils.Uint8ToBytes(buf, obj.NodeType)
-	utils.Uint32ToBytes(buf, uint32(len(obj.Capabilities)))
-	for _, item := range obj.Capabilities {
+func (obj WeightProof) ToBytes(buf *[]byte) {
+	utils.Uint32ToBytes(buf, uint32(len(obj.SubEpochs)))
+	for _, item := range obj.SubEpochs {
+		item.ToBytes(buf)
+	}
+	utils.Uint32ToBytes(buf, uint32(len(obj.SubEpochSegments)))
+	for _, item := range obj.SubEpochSegments {
+		item.ToBytes(buf)
+	}
+	utils.Uint32ToBytes(buf, uint32(len(obj.RecentChainData)))
+	for _, item := range obj.RecentChainData {
 		item.ToBytes(buf)
 	}
 }
 
-type NewPeak struct {
-	HeaderHash                [32]byte
-	Height                    uint32
-	Weight                    *big.Int
-	ForkPointWithPreviousPeak uint32
-	UnfinishedRewardBlockHash [32]byte
+type SubEpochData struct {
+	RewardChainHash   [32]byte
+	NumBlocksOverflow uint8
+	// (optional)
+	NewSubSlotIters uint64
+	// (optional)
+	NewDifficulty uint64
 }
 
-func (obj *NewPeak) FromBytes(buf *utils.ParseBuf) {
-	obj.HeaderHash = buf.Bytes32()
-	obj.Height = buf.Uint32()
-	obj.Weight = buf.Uint128()
-	obj.ForkPointWithPreviousPeak = buf.Uint32()
-	obj.UnfinishedRewardBlockHash = buf.Bytes32()
+func (obj *SubEpochData) FromBytes(buf *utils.ParseBuf) {
+	obj.RewardChainHash = buf.Bytes32()
+	obj.NumBlocksOverflow = buf.Uint8()
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		obj.NewSubSlotIters = buf.Uint64()
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		obj.NewDifficulty = buf.Uint64()
+	}
 }
 
-func (obj NewPeak) ToBytes(buf *[]byte) {
-	utils.Bytes32ToBytes(buf, obj.HeaderHash)
-	utils.Uint32ToBytes(buf, obj.Height)
-	utils.Uint128ToBytes(buf, obj.Weight)
-	utils.Uint32ToBytes(buf, obj.ForkPointWithPreviousPeak)
-	utils.Bytes32ToBytes(buf, obj.UnfinishedRewardBlockHash)
+func (obj SubEpochData) ToBytes(buf *[]byte) {
+	utils.Bytes32ToBytes(buf, obj.RewardChainHash)
+	utils.Uint8ToBytes(buf, obj.NumBlocksOverflow)
+	obj_NewSubSlotIters_isSet := !(obj.NewSubSlotIters == 0)
+	utils.BoolToBytes(buf, obj_NewSubSlotIters_isSet)
+	if obj_NewSubSlotIters_isSet {
+		utils.Uint64ToBytes(buf, obj.NewSubSlotIters)
+	}
+	obj_NewDifficulty_isSet := !(obj.NewDifficulty == 0)
+	utils.BoolToBytes(buf, obj_NewDifficulty_isSet)
+	if obj_NewDifficulty_isSet {
+		utils.Uint64ToBytes(buf, obj.NewDifficulty)
+	}
 }
 
-type RequestMempoolTransactions struct {
-	Filter []byte
+type SubEpochChallengeSegment struct {
+	SubEpochN uint32
+	SubSlots  []SubSlotData
+	// (optional) in first segment of each sub_epoch
+	RcSlotEndInfo *VDFInfo
 }
 
-func (obj *RequestMempoolTransactions) FromBytes(buf *utils.ParseBuf) {
-	obj.Filter = buf.Bytes()
+func (obj *SubEpochChallengeSegment) FromBytes(buf *utils.ParseBuf) {
+	obj.SubEpochN = buf.Uint32()
+	len_obj_SubSlots := buf.Uint32()
+	obj.SubSlots = make([]SubSlotData, len_obj_SubSlots)
+	for i := uint32(0); i < len_obj_SubSlots; i++ {
+		obj.SubSlots[i].FromBytes(buf)
+		if buf.Err() != nil {
+			return
+		}
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFInfo
+		t.FromBytes(buf)
+		obj.RcSlotEndInfo = &t
+	}
 }
 
-func (obj RequestMempoolTransactions) ToBytes(buf *[]byte) {
-	utils.BytesToBytes(buf, obj.Filter)
+func (obj SubEpochChallengeSegment) ToBytes(buf *[]byte) {
+	utils.Uint32ToBytes(buf, obj.SubEpochN)
+	utils.Uint32ToBytes(buf, uint32(len(obj.SubSlots)))
+	for _, item := range obj.SubSlots {
+		item.ToBytes(buf)
+	}
+	obj_RcSlotEndInfo_isSet := !(obj.RcSlotEndInfo == nil)
+	utils.BoolToBytes(buf, obj_RcSlotEndInfo_isSet)
+	if obj_RcSlotEndInfo_isSet {
+		obj.RcSlotEndInfo.ToBytes(buf)
+	}
 }
 
-// Return full list of peers
-type RequestPeers struct {
+type SubSlotData struct {
+	// (optional)
+	ProofOfSpace *ProofOfSpace
+	// (optional)
+	CcSignagePoint *VDFProof
+	// (optional)
+	CcInfusionPoint *VDFProof
+	// (optional)
+	IccInfusionPoint *VDFProof
+	// (optional)
+	CcSpVdfInfo *VDFInfo
+	// (optional)
+	SignagePointIndex uint8
+	// (optional)
+	CcSlotEnd *VDFProof
+	// (optional)
+	IccSlotEnd *VDFProof
+	// (optional)
+	CcSlotEndInfo *VDFInfo
+	// (optional)
+	IccSlotEndInfo *VDFInfo
+	// (optional)
+	CcIpVdfInfo *VDFInfo
+	// (optional)
+	IccIpVdfInfo *VDFInfo
+	// (optional)
+	TotalIters *big.Int
 }
 
-func (obj *RequestPeers) FromBytes(buf *utils.ParseBuf) {
+func (obj *SubSlotData) FromBytes(buf *utils.ParseBuf) {
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t ProofOfSpace
+		t.FromBytes(buf)
+		obj.ProofOfSpace = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFProof
+		t.FromBytes(buf)
+		obj.CcSignagePoint = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFProof
+		t.FromBytes(buf)
+		obj.CcInfusionPoint = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFProof
+		t.FromBytes(buf)
+		obj.IccInfusionPoint = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFInfo
+		t.FromBytes(buf)
+		obj.CcSpVdfInfo = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		obj.SignagePointIndex = buf.Uint8()
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFProof
+		t.FromBytes(buf)
+		obj.CcSlotEnd = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFProof
+		t.FromBytes(buf)
+		obj.IccSlotEnd = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFInfo
+		t.FromBytes(buf)
+		obj.CcSlotEndInfo = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFInfo
+		t.FromBytes(buf)
+		obj.IccSlotEndInfo = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFInfo
+		t.FromBytes(buf)
+		obj.CcIpVdfInfo = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFInfo
+		t.FromBytes(buf)
+		obj.IccIpVdfInfo = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		obj.TotalIters = buf.Uint128()
+	}
 }
 
-func (obj RequestPeers) ToBytes(buf *[]byte) {
+func (obj SubSlotData) ToBytes(buf *[]byte) {
+	obj_ProofOfSpace_isSet := !(obj.ProofOfSpace == nil)
+	utils.BoolToBytes(buf, obj_ProofOfSpace_isSet)
+	if obj_ProofOfSpace_isSet {
+		obj.ProofOfSpace.ToBytes(buf)
+	}
+	obj_CcSignagePoint_isSet := !(obj.CcSignagePoint == nil)
+	utils.BoolToBytes(buf, obj_CcSignagePoint_isSet)
+	if obj_CcSignagePoint_isSet {
+		obj.CcSignagePoint.ToBytes(buf)
+	}
+	obj_CcInfusionPoint_isSet := !(obj.CcInfusionPoint == nil)
+	utils.BoolToBytes(buf, obj_CcInfusionPoint_isSet)
+	if obj_CcInfusionPoint_isSet {
+		obj.CcInfusionPoint.ToBytes(buf)
+	}
+	obj_IccInfusionPoint_isSet := !(obj.IccInfusionPoint == nil)
+	utils.BoolToBytes(buf, obj_IccInfusionPoint_isSet)
+	if obj_IccInfusionPoint_isSet {
+		obj.IccInfusionPoint.ToBytes(buf)
+	}
+	obj_CcSpVdfInfo_isSet := !(obj.CcSpVdfInfo == nil)
+	utils.BoolToBytes(buf, obj_CcSpVdfInfo_isSet)
+	if obj_CcSpVdfInfo_isSet {
+		obj.CcSpVdfInfo.ToBytes(buf)
+	}
+	obj_SignagePointIndex_isSet := !(obj.SignagePointIndex == 0)
+	utils.BoolToBytes(buf, obj_SignagePointIndex_isSet)
+	if obj_SignagePointIndex_isSet {
+		utils.Uint8ToBytes(buf, obj.SignagePointIndex)
+	}
+	obj_CcSlotEnd_isSet := !(obj.CcSlotEnd == nil)
+	utils.BoolToBytes(buf, obj_CcSlotEnd_isSet)
+	if obj_CcSlotEnd_isSet {
+		obj.CcSlotEnd.ToBytes(buf)
+	}
+	obj_IccSlotEnd_isSet := !(obj.IccSlotEnd == nil)
+	utils.BoolToBytes(buf, obj_IccSlotEnd_isSet)
+	if obj_IccSlotEnd_isSet {
+		obj.IccSlotEnd.ToBytes(buf)
+	}
+	obj_CcSlotEndInfo_isSet := !(obj.CcSlotEndInfo == nil)
+	utils.BoolToBytes(buf, obj_CcSlotEndInfo_isSet)
+	if obj_CcSlotEndInfo_isSet {
+		obj.CcSlotEndInfo.ToBytes(buf)
+	}
+	obj_IccSlotEndInfo_isSet := !(obj.IccSlotEndInfo == nil)
+	utils.BoolToBytes(buf, obj_IccSlotEndInfo_isSet)
+	if obj_IccSlotEndInfo_isSet {
+		obj.IccSlotEndInfo.ToBytes(buf)
+	}
+	obj_CcIpVdfInfo_isSet := !(obj.CcIpVdfInfo == nil)
+	utils.BoolToBytes(buf, obj_CcIpVdfInfo_isSet)
+	if obj_CcIpVdfInfo_isSet {
+		obj.CcIpVdfInfo.ToBytes(buf)
+	}
+	obj_IccIpVdfInfo_isSet := !(obj.IccIpVdfInfo == nil)
+	utils.BoolToBytes(buf, obj_IccIpVdfInfo_isSet)
+	if obj_IccIpVdfInfo_isSet {
+		obj.IccIpVdfInfo.ToBytes(buf)
+	}
+	obj_TotalIters_isSet := !(obj.TotalIters == nil)
+	utils.BoolToBytes(buf, obj_TotalIters_isSet)
+	if obj_TotalIters_isSet {
+		utils.Uint128ToBytes(buf, obj.TotalIters)
+	}
 }
 
-type RespondPeers struct {
-	PeerList []TimestampedPeerInfo
+// This is a list of coins being spent along with their solution programs, and a single
+// aggregated signature. This is the object that most closely corresponds to a bitcoin
+// transaction (although because of non-interactive signature aggregation, the boundaries
+// between transactions are more flexible than in bitcoin).
+type SpendBundle struct {
+	CoinSolutions       []CoinSolution
+	AggregatedSignature G2Element
 }
 
-func (obj *RespondPeers) FromBytes(buf *utils.ParseBuf) {
-	len_obj_PeerList := buf.Uint32()
-	obj.PeerList = make([]TimestampedPeerInfo, len_obj_PeerList)
-	for i := uint32(0); i < len_obj_PeerList; i++ {
-		obj.PeerList[i].FromBytes(buf)
+func (obj *SpendBundle) FromBytes(buf *utils.ParseBuf) {
+	len_obj_CoinSolutions := buf.Uint32()
+	obj.CoinSolutions = make([]CoinSolution, len_obj_CoinSolutions)
+	for i := uint32(0); i < len_obj_CoinSolutions; i++ {
+		obj.CoinSolutions[i].FromBytes(buf)
+		if buf.Err() != nil {
+			return
+		}
+	}
+	obj.AggregatedSignature.FromBytes(buf)
+}
+
+func (obj SpendBundle) ToBytes(buf *[]byte) {
+	utils.Uint32ToBytes(buf, uint32(len(obj.CoinSolutions)))
+	for _, item := range obj.CoinSolutions {
+		item.ToBytes(buf)
+	}
+	obj.AggregatedSignature.ToBytes(buf)
+}
+
+// This is a rather disparate data structure that validates coin transfers. It's generally populated
+// with data from different sources, since burned coins are identified by name, so it is built up
+// more often that it is streamed.
+type CoinSolution struct {
+	Coin         Coin
+	PuzzleReveal SerializedProgram
+	Solution     SerializedProgram
+}
+
+func (obj *CoinSolution) FromBytes(buf *utils.ParseBuf) {
+	obj.Coin.FromBytes(buf)
+	obj.PuzzleReveal.FromBytes(buf)
+	obj.Solution.FromBytes(buf)
+}
+
+func (obj CoinSolution) ToBytes(buf *[]byte) {
+	obj.Coin.ToBytes(buf)
+	obj.PuzzleReveal.ToBytes(buf)
+	obj.Solution.ToBytes(buf)
+}
+
+type UnfinishedBlock struct {
+	// If first sb
+	FinishedSubSlots []EndOfSubSlotBundle
+	// Reward chain trunk data
+	RewardChainBlock RewardChainBlockUnfinished
+	// (optional) If not first sp in sub-slot
+	ChallengeChainSpProof *VDFProof
+	// (optional) If not first sp in sub-slot
+	RewardChainSpProof *VDFProof
+	// Reward chain foliage data
+	Foliage Foliage
+	// (optional) Reward chain foliage data (tx block)
+	FoliageTransactionBlock *FoliageTransactionBlock
+	// (optional) Reward chain foliage data (tx block additional)
+	TransactionsInfo *TransactionsInfo
+	// (optional) Program that generates transactions
+	TransactionsGenerator *SerializedProgram
+	// List of block heights of previous generators referenced in this block
+	TransactionsGeneratorRefList []uint32
+}
+
+func (obj *UnfinishedBlock) FromBytes(buf *utils.ParseBuf) {
+	len_obj_FinishedSubSlots := buf.Uint32()
+	obj.FinishedSubSlots = make([]EndOfSubSlotBundle, len_obj_FinishedSubSlots)
+	for i := uint32(0); i < len_obj_FinishedSubSlots; i++ {
+		obj.FinishedSubSlots[i].FromBytes(buf)
+		if buf.Err() != nil {
+			return
+		}
+	}
+	obj.RewardChainBlock.FromBytes(buf)
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFProof
+		t.FromBytes(buf)
+		obj.ChallengeChainSpProof = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t VDFProof
+		t.FromBytes(buf)
+		obj.RewardChainSpProof = &t
+	}
+	obj.Foliage.FromBytes(buf)
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t FoliageTransactionBlock
+		t.FromBytes(buf)
+		obj.FoliageTransactionBlock = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t TransactionsInfo
+		t.FromBytes(buf)
+		obj.TransactionsInfo = &t
+	}
+	if flag := buf.Bool(); buf.Err() == nil && flag {
+		var t SerializedProgram
+		t.FromBytes(buf)
+		obj.TransactionsGenerator = &t
+	}
+	len_obj_TransactionsGeneratorRefList := buf.Uint32()
+	obj.TransactionsGeneratorRefList = make([]uint32, len_obj_TransactionsGeneratorRefList)
+	for i := uint32(0); i < len_obj_TransactionsGeneratorRefList; i++ {
+		obj.TransactionsGeneratorRefList[i] = buf.Uint32()
 		if buf.Err() != nil {
 			return
 		}
 	}
 }
 
-func (obj RespondPeers) ToBytes(buf *[]byte) {
-	utils.Uint32ToBytes(buf, uint32(len(obj.PeerList)))
-	for _, item := range obj.PeerList {
+func (obj UnfinishedBlock) ToBytes(buf *[]byte) {
+	utils.Uint32ToBytes(buf, uint32(len(obj.FinishedSubSlots)))
+	for _, item := range obj.FinishedSubSlots {
 		item.ToBytes(buf)
+	}
+	obj.RewardChainBlock.ToBytes(buf)
+	obj_ChallengeChainSpProof_isSet := !(obj.ChallengeChainSpProof == nil)
+	utils.BoolToBytes(buf, obj_ChallengeChainSpProof_isSet)
+	if obj_ChallengeChainSpProof_isSet {
+		obj.ChallengeChainSpProof.ToBytes(buf)
+	}
+	obj_RewardChainSpProof_isSet := !(obj.RewardChainSpProof == nil)
+	utils.BoolToBytes(buf, obj_RewardChainSpProof_isSet)
+	if obj_RewardChainSpProof_isSet {
+		obj.RewardChainSpProof.ToBytes(buf)
+	}
+	obj.Foliage.ToBytes(buf)
+	obj_FoliageTransactionBlock_isSet := !(obj.FoliageTransactionBlock == nil)
+	utils.BoolToBytes(buf, obj_FoliageTransactionBlock_isSet)
+	if obj_FoliageTransactionBlock_isSet {
+		obj.FoliageTransactionBlock.ToBytes(buf)
+	}
+	obj_TransactionsInfo_isSet := !(obj.TransactionsInfo == nil)
+	utils.BoolToBytes(buf, obj_TransactionsInfo_isSet)
+	if obj_TransactionsInfo_isSet {
+		obj.TransactionsInfo.ToBytes(buf)
+	}
+	obj_TransactionsGenerator_isSet := !(obj.TransactionsGenerator == nil)
+	utils.BoolToBytes(buf, obj_TransactionsGenerator_isSet)
+	if obj_TransactionsGenerator_isSet {
+		obj.TransactionsGenerator.ToBytes(buf)
+	}
+	utils.Uint32ToBytes(buf, uint32(len(obj.TransactionsGeneratorRefList)))
+	for _, item := range obj.TransactionsGeneratorRefList {
+		utils.Uint32ToBytes(buf, item)
 	}
 }
 
@@ -1036,41 +1494,4 @@ func (obj TimestampedPeerInfo) ToBytes(buf *[]byte) {
 	utils.StringToBytes(buf, obj.Host)
 	utils.Uint16ToBytes(buf, obj.Port)
 	utils.Uint64ToBytes(buf, obj.Timestamp)
-}
-
-// === Tuples ===
-
-type TupleUint16Str struct {
-	V0 uint16
-	V1 string
-}
-
-func (obj *TupleUint16Str) FromBytes(buf *utils.ParseBuf) {
-	obj.V0 = buf.Uint16()
-	obj.V1 = buf.String()
-}
-
-func (obj TupleUint16Str) ToBytes(buf *[]byte) {
-	utils.Uint16ToBytes(buf, obj.V0)
-	utils.StringToBytes(buf, obj.V1)
-}
-
-// === Dummy ===
-
-type G1Element struct{ Bytes []byte }
-
-func (obj *G1Element) FromBytes(buf *utils.ParseBuf) {
-	obj.Bytes = buf.BytesN(48)
-}
-func (obj G1Element) ToBytes(buf *[]byte) {
-	utils.BytesWOSizeToBytes(buf, obj.Bytes)
-}
-
-type G2Element struct{ Bytes []byte }
-
-func (obj *G2Element) FromBytes(buf *utils.ParseBuf) {
-	obj.Bytes = buf.BytesN(96)
-}
-func (obj G2Element) ToBytes(buf *[]byte) {
-	utils.BytesWOSizeToBytes(buf, obj.Bytes)
 }

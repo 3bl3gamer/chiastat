@@ -230,14 +230,19 @@ type ToBytes interface {
 	ToBytes(buf *[]byte)
 }
 
+type FromBytes interface {
+	FromBytes(buf *ParseBuf)
+}
+
+type FromToBytes interface {
+	FromBytes
+	ToBytes
+}
+
 func ToByteSlice(obj ToBytes) []byte {
 	var buf []byte
 	obj.ToBytes(&buf)
 	return buf
-}
-
-type FromBytes interface {
-	FromBytes(buf *ParseBuf)
 }
 
 func FromByteSliceExact(buf []byte, obj FromBytes) error {
