@@ -110,15 +110,18 @@ type Result struct {
 	Err  error
 }
 
+type MessageHandler func(id uint16, msg utils.FromBytes)
+
 // https://github.com/Chia-Network/chia-blockchain/blob/latest/chia/server/ws_connection.py
 type WSChiaConnection struct {
-	peerID           [32]byte
-	ws               *websocket.Conn
-	isOutbound       bool
-	lastRequestNonce uint16
-	pendingRequests  map[uint16]chan Result
-	closeErr         error
-	mutex            *sync.Mutex
+	peerID                 [32]byte
+	ws                     *websocket.Conn
+	isOutbound             bool
+	lastRequestNonce       uint16
+	pendingRequests        map[uint16]chan Result
+	incomingMessageHandler MessageHandler
+	closeErr               error
+	mutex                  *sync.Mutex
 }
 
 func NewWSChiaConnection(ws *websocket.Conn, isOutbound bool) *WSChiaConnection {
@@ -157,8 +160,6 @@ func ListenOn(addr, certFilePath, keyFilePath string, handler func(*WSChiaConnec
 			log.Print("WARN: upgrade failed:", err)
 			return
 		}
-		defer ws.Close()
-
 		handler(NewWSChiaConnection(ws, false))
 	})
 
@@ -177,6 +178,10 @@ func (c WSChiaConnection) PeerID() [32]byte {
 }
 func (c WSChiaConnection) PeerIDHex() string {
 	return hex.EncodeToString(c.peerID[:])
+}
+
+func (c *WSChiaConnection) SetMessageHandler(handler MessageHandler) {
+	c.incomingMessageHandler = handler
 }
 
 // https://github.com/Chia-Network/chia-blockchain/blob/latest/chia/server/ws_connection.py#L106
@@ -275,7 +280,7 @@ func (c *WSChiaConnection) CloseWithErr(err error) {
 	if c.closeErr == nil {
 		c.closeErr = err
 		if err := c.ws.Close(); err != nil {
-			log.Printf("WARN: closing connection: %s", err)
+			log.Printf("WARN: error while closing connection: %s", err)
 		}
 	}
 	log.Printf("DEBUG: closing with: %s", err)
@@ -301,45 +306,53 @@ func (c *WSChiaConnection) readRoutine() {
 			c.CloseWithErr(err)
 			break
 		}
-		if err := c.processMessage(buf); err != nil {
+		if err := c.processMessageBytes(buf); err != nil {
 			c.CloseWithErr(err)
 			break
 		}
 	}
 }
 
-func (c *WSChiaConnection) processMessage(msgBuf []byte) error {
+func (c *WSChiaConnection) processMessageBytes(msgBuf []byte) error {
 	var msg types.Message
 	if err := utils.FromByteSliceExact(msgBuf, &msg); err != nil {
 		return merry.Wrap(err)
 	}
 	switch msg.Type {
+	case types.MSG_NEW_PEAK:
+		return c.processMessageOfType(msg, &types.NewPeak{})
+	case types.MSG_REQUEST_PEERS:
+		return c.processMessageOfType(msg, &types.RequestPeers{})
 	case types.MSG_RESPOND_PEERS:
-		var peers types.RespondPeers
-		if err := utils.FromByteSliceExact(msg.Data, &peers); err != nil {
-			return merry.Wrap(err)
-		}
-		if err := c.handleResponse(msg.ID, &peers); err != nil {
-			return merry.Wrap(err)
-		}
+		return c.processMessageOfType(msg, &types.RespondPeers{})
+	case types.MSG_REQUEST_MEMPOOL_TRANSACTIONS:
+		return c.processMessageOfType(msg, &types.RequestMempoolTransactions{})
 	default:
 		log.Printf("WARN: unsupported message type: %d", msg.Type)
+		return nil
 	}
-	return nil
 }
 
-func (c *WSChiaConnection) handleResponse(msgID uint16, data utils.FromBytes) error {
+func (c *WSChiaConnection) processMessageOfType(msg types.Message, data utils.FromBytes) error {
+	if err := utils.FromByteSliceExact(msg.Data, data); err != nil {
+		return merry.Wrap(err)
+	}
+
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	resChan, ok := c.pendingRequests[msgID]
-	if !ok {
-		return merry.Errorf("unexpected message ID: %d", msgID)
+	resChan, ok := c.pendingRequests[msg.ID]
+	if ok {
+		delete(c.pendingRequests, msg.ID)
+		resChan <- Result{Data: data}
+		close(resChan)
+	} else {
+		if c.incomingMessageHandler == nil {
+			log.Printf("DEBUG: ignoring incoming non-response message with ID=%d", msg.ID)
+		} else {
+			go c.incomingMessageHandler(msg.ID, data)
+		}
 	}
-	delete(c.pendingRequests, msgID)
-
-	resChan <- Result{Data: data}
-	close(resChan)
 	return nil
 }
 
@@ -385,6 +398,18 @@ func (c *WSChiaConnection) SendSync(msgType uint8, request utils.ToBytes) (utils
 		return nil, merry.Wrap(res.Err)
 	}
 	return res.Data, nil
+}
+
+func (c *WSChiaConnection) Reply(replyToID uint16, msgType uint8, response utils.ToBytes) {
+	msg := types.Message{
+		Type: msgType,
+		ID:   replyToID,
+		Data: utils.ToByteSlice(response),
+	}
+	err := c.ws.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msg))
+	if err != nil {
+		c.CloseWithErr(err)
+	}
 }
 
 func (c *WSChiaConnection) RequestPeers() (*types.RespondPeers, error) {

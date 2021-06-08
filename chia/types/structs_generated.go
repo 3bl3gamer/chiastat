@@ -1,3 +1,4 @@
+// Generated, do not edit.
 package types
 
 import (
@@ -949,6 +950,42 @@ func (obj Handshake) ToBytes(buf *[]byte) {
 	for _, item := range obj.Capabilities {
 		item.ToBytes(buf)
 	}
+}
+
+type NewPeak struct {
+	HeaderHash                [32]byte
+	Height                    uint32
+	Weight                    *big.Int
+	ForkPointWithPreviousPeak uint32
+	UnfinishedRewardBlockHash [32]byte
+}
+
+func (obj *NewPeak) FromBytes(buf *utils.ParseBuf) {
+	obj.HeaderHash = buf.Bytes32()
+	obj.Height = buf.Uint32()
+	obj.Weight = buf.Uint128()
+	obj.ForkPointWithPreviousPeak = buf.Uint32()
+	obj.UnfinishedRewardBlockHash = buf.Bytes32()
+}
+
+func (obj NewPeak) ToBytes(buf *[]byte) {
+	utils.Bytes32ToBytes(buf, obj.HeaderHash)
+	utils.Uint32ToBytes(buf, obj.Height)
+	utils.Uint128ToBytes(buf, obj.Weight)
+	utils.Uint32ToBytes(buf, obj.ForkPointWithPreviousPeak)
+	utils.Bytes32ToBytes(buf, obj.UnfinishedRewardBlockHash)
+}
+
+type RequestMempoolTransactions struct {
+	Filter []byte
+}
+
+func (obj *RequestMempoolTransactions) FromBytes(buf *utils.ParseBuf) {
+	obj.Filter = buf.Bytes()
+}
+
+func (obj RequestMempoolTransactions) ToBytes(buf *[]byte) {
+	utils.BytesToBytes(buf, obj.Filter)
 }
 
 // Return full list of peers

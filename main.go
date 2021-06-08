@@ -3,6 +3,8 @@ package main
 import (
 	"chiastat/chia"
 	"chiastat/chia/network"
+	"chiastat/chia/types"
+	chiautils "chiastat/chia/utils"
 	"chiastat/nodes"
 	"chiastat/utils"
 	"flag"
@@ -169,7 +171,15 @@ func CMDListenIncoming() error {
 
 	connHandler := func(c *network.WSChiaConnection) {
 		fmt.Println("new connection from:", c.PeerIDHex())
-		defer c.Close()
+		// defer c.Close()
+
+		c.SetMessageHandler(func(msgID uint16, msg chiautils.FromBytes) {
+			fmt.Printf("%#v\n", msg)
+			switch msg.(type) {
+			case *types.RequestPeers:
+				c.Reply(msgID, types.MSG_RESPOND_PEERS, types.RespondPeers{PeerList: nil})
+			}
+		})
 
 		if _, err := c.PerformHandshake(); err != nil {
 			log.Printf("handshake error: %s", err)
@@ -177,12 +187,12 @@ func CMDListenIncoming() error {
 		}
 
 		c.StartRoutines()
+
 		peers, err := c.RequestPeers()
 		if err != nil {
 			log.Printf("peers error: %s", err)
 			return
 		}
-
 		fmt.Println("total peers:", len(peers.PeerList))
 	}
 

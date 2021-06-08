@@ -273,7 +273,17 @@ source_classes = {
     # ===
     'server/outbound_message.py': ['Message'],
     'protocols/shared_protocol.py': ['Handshake'],
-    'protocols/full_node_protocol.py': ['RequestPeers', 'RespondPeers'],
+    'protocols/full_node_protocol.py': [
+        'NewPeak',
+        # 'NewTransaction', 'RequestTransaction', 'RespondTransaction',
+        # 'RequestProofOfWeight', 'RespondProofOfWeight',
+        # 'RequestBlock', 'RejectBlock', 'RequestBlocks', 'RespondBlocks', 'RejectBlocks', 'RespondBlock',
+        # 'NewUnfinishedBlock', 'RequestUnfinishedBlock', 'RespondUnfinishedBlock',
+        # 'NewSignagePointOrEndOfSubSlot', 'RequestSignagePointOrEndOfSubSlot', 'RespondSignagePoint', 'RespondEndOfSubSlot',
+        'RequestMempoolTransactions',
+        # 'NewCompactVDF', 'RequestCompactVDF', 'RespondCompactVDF',
+        'RequestPeers', 'RespondPeers',
+    ],
     'types/peer_info.py': ['TimestampedPeerInfo'],
 }
 
@@ -293,6 +303,7 @@ with open(out_fname, 'w') as f:
     imports = ["math/big", "chiastat/chia/utils"]
     if DEBUG:
         imports.append("fmt")
+    f.write('// Generated, do not edit.\n')
     f.write('package types\n\n')
     f.write('import (\n' + '\n'.join(f'"{x}"' for x in imports) + '\n)\n\n')
 
