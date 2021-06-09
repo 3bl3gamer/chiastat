@@ -1,7 +1,9 @@
 // Generated with `go genetare`. Do not edit.
 package types
 
-import "chiastat/chia/utils"
+import (
+	"chiastat/chia/utils"
+)
 
 const (
 	// Shared protocol (all services)

@@ -3,7 +3,6 @@ package utils
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"os"
 
 	"github.com/abh/geoip"
@@ -26,7 +25,6 @@ func MakeGeoIPConnection() (*geoip.GeoIP, *geoip.GeoIP, error) {
 	if err != nil {
 		return nil, nil, merry.Wrap(err)
 	}
-	fmt.Println(gdb.GetCountry("97.113.72.89"))
 	return gdb, gdb6, nil
 }
 

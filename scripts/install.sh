@@ -18,20 +18,12 @@ for i in "$@"; do
     esac
 done
 
-cd "$repo_dir/../chia-blockchain/"
-git checkout .
-git apply "$repo_dir/chia_hook.patch"
-cd "$repo_dir"
-
-[ -p update_nodes_request.fifo ] || mkfifo update_nodes_request.fifo
-[ -p update_nodes_response.fifo ] || mkfifo update_nodes_response.fifo
-
 if [ $migrate = true ]; then
     go run "$repo_dir"/migrations/*.go
 fi
 
 if [ $restart = true ]; then
-    for name in chia chiastat-listen chiastat-update-py chiastat-update; do
+    for name in chia chiastat-update; do
         systemctl restart $name
     done
 fi

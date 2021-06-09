@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -131,6 +132,7 @@ type WSChiaConnection struct {
 	incomingMessageHandler MessageHandler
 	closeErr               error
 	mutex                  *sync.Mutex
+	debug                  bool
 }
 
 func NewWSChiaConnection(ws *websocket.Conn, isOutbound bool) *WSChiaConnection {
@@ -143,6 +145,7 @@ func NewWSChiaConnection(ws *websocket.Conn, isOutbound bool) *WSChiaConnection 
 		isOutbound:      isOutbound,
 		pendingRequests: make(map[uint16]chan Result),
 		mutex:           &sync.Mutex{},
+		debug:           true,
 	}
 }
 
@@ -189,8 +192,16 @@ func (c WSChiaConnection) PeerIDHex() string {
 	return hex.EncodeToString(c.peerID[:])
 }
 
+func (c WSChiaConnection) RemoteAddr() net.Addr {
+	return c.ws.RemoteAddr()
+}
+
 func (c *WSChiaConnection) SetMessageHandler(handler MessageHandler) {
 	c.incomingMessageHandler = handler
+}
+
+func (c *WSChiaConnection) SetDebug(debug bool) {
+	c.debug = debug
 }
 
 // https://github.com/Chia-Network/chia-blockchain/blob/latest/chia/server/ws_connection.py#L106
@@ -292,7 +303,9 @@ func (c *WSChiaConnection) CloseWithErr(err error) {
 			log.Printf("WARN: error while closing connection: %s", err)
 		}
 	}
-	log.Printf("DEBUG: closing with: %s", err)
+	if c.debug {
+		log.Printf("DEBUG: closing with: %s", err)
+	}
 
 	for msgID, resChan := range c.pendingRequests {
 		resChan <- Result{Err: c.closeErr}
@@ -350,7 +363,9 @@ func (c *WSChiaConnection) processMessageOfType(msg types.Message, data utils.Fr
 		close(resChan)
 	} else {
 		if c.incomingMessageHandler == nil {
-			log.Printf("DEBUG: ignoring incoming non-response message with ID=%d", msg.ID)
+			if c.debug {
+				log.Printf("DEBUG: ignoring incoming non-response message with ID=%d", msg.ID)
+			}
 		} else {
 			go c.incomingMessageHandler(msg.ID, data)
 		}

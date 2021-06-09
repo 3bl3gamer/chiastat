@@ -21,18 +21,44 @@ type constGroup struct {
 }
 
 type constGroups struct {
-	fnamePrefix  string
-	getterPrefix string
-	constPrefix  string
-	groups       []constGroup
+	fnamePrefix      string
+	getterPrefix     string
+	constPrefix      string
+	stringNameGetter bool
+	stringNameMap    map[string]string
+	imports          []string
+	groups           []constGroup
 }
 
 var groups = []constGroups{
+	{
+		// https://github.com/Chia-Network/chia-blockchain/blob/latest/chia/server/outbound_message.py#L10
+		fnamePrefix:      "node_types",
+		getterPrefix:     "NodeType",
+		constPrefix:      "NODE",
+		stringNameGetter: true,
+		stringNameMap: map[string]string{
+			"FULL": "FULL_NODE",
+		},
+		groups: []constGroup{
+			{
+				values: []valueItem{
+					{"FULL", 1},
+					{"HARVESTER", 2},
+					{"FARMER", 3},
+					{"TIMELORD", 4},
+					{"INTRODUCER", 5},
+					{"WALLET", 6},
+				},
+			},
+		},
+	},
 	{
 		// https://github.com/Chia-Network/chia-blockchain/blob/latest/chia/protocols/protocol_message_types.py
 		fnamePrefix:  "message_types",
 		getterPrefix: "MessageType",
 		constPrefix:  "MSG",
+		imports:      []string{"chiastat/chia/utils"},
 		groups: []constGroup{
 			{
 				comment: "Shared protocol (all services)",
@@ -170,7 +196,13 @@ func main() {
 		write("// Generated with `go genetare`. Do not edit.\n")
 		write("package types\n\n")
 
-		write(`import "chiastat/chia/utils"` + "\n\n")
+		if len(groupFile.imports) > 0 {
+			write("import (\n")
+			for _, path := range groupFile.imports {
+				write(`"` + path + `"` + "\n")
+			}
+			write(")\n\n")
+		}
 
 		write("const (\n")
 		for i, group := range groupFile.groups {
@@ -186,35 +218,63 @@ func main() {
 		}
 		write(")\n\n")
 
-		write("func " + groupFile.getterPrefix + "Struct(type_ uint8) (utils.FromToBytes, bool) {\n")
-		write("switch type_ {\n")
+		needStructGetters := false
 		for _, group := range groupFile.groups {
 			if group.useInGetter {
-				for _, v := range group.values {
-					write("case " + groupFile.constPrefix + "_" + v.name + ":\n")
-					write("return &" + structName(v.name) + "{}, true\n")
-				}
+				needStructGetters = true
+				break
 			}
 		}
-		write("default:\n")
-		write("return nil, false\n")
-		write("}\n")
-		write("}\n\n")
+		if needStructGetters {
+			write("func " + groupFile.getterPrefix + "Struct(type_ uint8) (utils.FromToBytes, bool) {\n")
+			write("switch type_ {\n")
+			for _, group := range groupFile.groups {
+				if group.useInGetter {
+					for _, v := range group.values {
+						write("case " + groupFile.constPrefix + "_" + v.name + ":\n")
+						write("return &" + structName(v.name) + "{}, true\n")
+					}
+				}
+			}
+			write("default:\n")
+			write("return nil, false\n")
+			write("}\n")
+			write("}\n\n")
 
-		write("func " + groupFile.getterPrefix + "FromStruct(obj interface{}) (uint8, bool) {\n")
-		write("switch obj.(type) {\n")
-		for _, group := range groupFile.groups {
-			if group.useInGetter {
-				for _, v := range group.values {
-					write("case " + structName(v.name) + ", *" + structName(v.name) + ":\n")
-					write("return " + groupFile.constPrefix + "_" + v.name + ", true\n")
+			write("func " + groupFile.getterPrefix + "FromStruct(obj interface{}) (uint8, bool) {\n")
+			write("switch obj.(type) {\n")
+			for _, group := range groupFile.groups {
+				if group.useInGetter {
+					for _, v := range group.values {
+						write("case " + structName(v.name) + ", *" + structName(v.name) + ":\n")
+						write("return " + groupFile.constPrefix + "_" + v.name + ", true\n")
+					}
 				}
 			}
+			write("default:\n")
+			write("return 0, false\n")
+			write("}\n")
+			write("}\n\n")
 		}
-		write("default:\n")
-		write("return 0, false\n")
-		write("}\n")
-		write("}\n\n")
+
+		if groupFile.stringNameGetter {
+			write("func " + groupFile.getterPrefix + "Name(type_ uint8) (string, bool) {\n")
+			write("switch type_ {\n")
+			for _, group := range groupFile.groups {
+				for _, v := range group.values {
+					name, ok := groupFile.stringNameMap[v.name]
+					if !ok {
+						name = v.name
+					}
+					write("case " + groupFile.constPrefix + "_" + v.name + ":\n")
+					write(`return "` + name + `", true` + "\n")
+				}
+			}
+			write("default:\n")
+			write(`return "UNKNOWN", false` + "\n")
+			write("}\n")
+			write("}\n\n")
+		}
 
 		if err := outFile.Close(); err != nil {
 			log.Fatal(err)

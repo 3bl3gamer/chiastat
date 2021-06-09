@@ -180,8 +180,7 @@ func CMDListenIncoming() error {
 			case *types.RequestPeers:
 				c.SendReply(msgID, types.RespondPeers{PeerList: nil})
 			case *types.RespondPeers:
-				fmt.Println("unexpected peers", len(msg.PeerList))
-				// a bit more peers (not response), TODO
+				fmt.Printf("some peers: %#v", msg.PeerList)
 			case *types.NewCompactVDF,
 				*types.NewSignagePointOrEndOfSubSlot,
 				*types.NewUnfinishedBlock,
@@ -213,7 +212,6 @@ func CMDListenIncoming() error {
 }
 
 var commands = map[string]func() error{
-	"listen-nodes":    nodes.CMDListenNodes,
 	"update-nodes":    nodes.CMDUpdateNodes,
 	"import-nodes":    nodes.CMDImportNodes,
 	"save-stats":      nodes.CMDSaveStats,

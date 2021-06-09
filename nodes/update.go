@@ -1,35 +1,40 @@
 package nodes
 
 import (
-	"bufio"
+	"chiastat/chia/network"
+	"chiastat/chia/types"
+	chiautils "chiastat/chia/utils"
 	"chiastat/utils"
 	"context"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/abh/geoip"
 	"github.com/ansel1/merry"
 	"github.com/go-pg/pg/v10"
-	"github.com/go-pg/pg/v10/types"
+	pgtypes "github.com/go-pg/pg/v10/types"
 )
+
+func JoinHostPort(host string, port uint16) string {
+	return net.JoinHostPort(host, strconv.Itoa(int(port)))
+}
 
 type NodeAddr struct {
 	Host    string
-	Port    int64
+	Port    uint16
 	Country *string
 }
 
 type Node struct {
 	ID              []byte
 	Host            string
-	Port            int64
+	Port            uint16
 	ProtocolVersion string
 	SoftwareVersion string
 	NodeType        string
@@ -45,9 +50,9 @@ func (l NodeAddrListAsPGTuple) AppendValue(b []byte, flags int) ([]byte, error) 
 			b = append(b, ',')
 		}
 		b = append(b, '(')
-		b = types.AppendString(b, item.Host, 1) //quoteFlag=1
+		b = pgtypes.AppendString(b, item.Host, 1) //quoteFlag=1
 		b = append(b, ',')
-		b = append(b, []byte(strconv.FormatInt(item.Port, 10))...)
+		b = append(b, []byte(strconv.FormatInt(int64(item.Port), 10))...)
 		b = append(b, ')')
 	}
 	return b, nil
@@ -157,135 +162,127 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 	return worker
 }
 
-func startNodesChecker(db *pg.DB, nodesInChan chan *NodeAddr, nodesOutChan chan *Node, rawNodesOutChan chan *NodeAddr) utils.Worker {
-	worker := utils.NewSimpleWorker(2)
+func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nodesOutChan chan *Node, rawNodesOutChan chan []types.TimestampedPeerInfo, concurrency int) utils.Worker {
+	worker := utils.NewSimpleWorker(concurrency)
 
-	inPacketNum := int64(-1)
-	applyPacketNum := func(num string) error {
-		packetNum, err := strconv.ParseInt(num, 10, 64)
-		if err != nil {
-			return merry.Wrap(err)
-		}
-		if inPacketNum != -1 && packetNum != inPacketNum+1 {
-			log.Printf("UPDATE: WARN: expected packet num %d, got %d (%d)",
-				inPacketNum+1, packetNum, packetNum-(inPacketNum+1))
-		}
-		inPacketNum = packetNum
-		return nil
-	}
-	handleMessage := func(s string) error {
-		switch s[0] {
-		case 'H':
-			items := strings.Split(s, " ")
-			if len(items) != 8 {
-				return merry.Errorf("expected 8 items, got %d: %s", len(items), s)
-			}
-			if err := applyPacketNum(items[1]); err != nil {
-				return merry.Wrap(err)
-			}
-			id, err := hex.DecodeString(items[2])
+	var totalCount int64 = 0
+	var totalCountOk int64 = 0
+	var stampCount int64 = 0
+	stamp := time.Now().Unix()
+
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer worker.Done()
+
+			cfg, err := network.MakeTSLConfigFromFiles(
+				sslDir+"/ca/chia_ca.crt",
+				sslDir+"/full_node/public_full_node.crt",
+				sslDir+"/full_node/public_full_node.key")
 			if err != nil {
-				return merry.Wrap(err)
+				worker.AddError(err)
+				return
 			}
-			host := items[3]
-			port, err := strconv.ParseInt(items[4], 10, 64)
-			if err != nil {
-				return merry.Wrap(err)
-			}
-			nodesOutChan <- &Node{
-				ID:              id,
-				Host:            host,
-				Port:            port,
-				ProtocolVersion: items[5],
-				SoftwareVersion: items[6],
-				NodeType:        items[7],
-			}
-		case 'R':
-			items := strings.Split(s, " ")
-			if len(items)%2 != 0 {
-				return merry.Errorf("expected even items count, got %d: %s", len(items), s)
-			}
-			if err := applyPacketNum(items[1]); err != nil {
-				return merry.Wrap(err)
-			}
-			tx, err := db.Begin()
-			if err != nil {
-				return merry.Wrap(err)
-			}
-			defer tx.Rollback()
-			for i := 2; i < len(items); i += 2 {
-				host := items[i]
-				port, err := strconv.ParseInt(items[i+1], 10, 64)
+
+			handleNode := func(node *NodeAddr) error {
+				c, err := network.ConnectTo(cfg, JoinHostPort(node.Host, node.Port))
 				if err != nil {
 					return merry.Wrap(err)
 				}
-				rawNodesOutChan <- &NodeAddr{
-					Host: host,
-					Port: port,
+				c.SetDebug(false)
+				hs, err := c.PerformHandshake()
+				if err != nil {
+					return merry.Wrap(err)
 				}
-			}
-			if err := tx.Commit(); err != nil {
-				return merry.Wrap(err)
-			}
-		default:
-			return merry.Errorf("unexpected message: %s", s)
-		}
-		return nil
-	}
+				c.StartRoutines()
 
-	stamp := time.Now().Unix()
-	countMsgOut := int64(0)
-	countMsgIn := int64(0)
+				id := c.PeerID()
+				nodeType, _ := types.NodeTypeName(hs.NodeType)
+				for len(nodesOutChan) == cap(nodesOutChan) {
+					time.Sleep(time.Second)
+				}
+				nodesOutChan <- &Node{
+					ID:              id[:],
+					Host:            c.RemoteAddr().(*net.TCPAddr).IP.String(),
+					Port:            hs.ServerPort,
+					ProtocolVersion: hs.ProtocolVersion,
+					SoftwareVersion: hs.SoftwareVersion,
+					NodeType:        nodeType,
+				}
 
-	go func() {
-		defer worker.Done()
-
-		for {
-			fReq, err := os.OpenFile("update_nodes_request.fifo", os.O_WRONLY, 0)
-			if err != nil {
-				worker.AddError(err)
-				return
+				for i := 0; i < 3; i++ {
+					peers, err := c.RequestPeers()
+					if err != nil {
+						break
+					}
+					for len(rawNodesOutChan) == cap(rawNodesOutChan) {
+						time.Sleep(time.Second)
+					}
+					rawNodesOutChan <- peers.PeerList
+				}
+				return nil
 			}
-			defer fReq.Close()
 
 			for node := range nodesInChan {
-				_, err := fmt.Fprintf(fReq, "C %s %d\n", node.Host, node.Port)
-				if err != nil {
-					log.Printf("checker send error: %s", err)
-					break
+				err := handleNode(node)
+				if err == nil {
+					atomic.AddInt64(&totalCountOk, 1)
 				}
-				if atomic.AddInt64(&countMsgOut, 1)%1000 == 0 {
-					log.Printf("UPDATE: msg out=%d, in=%d, out rpm=%.1f",
-						countMsgOut, countMsgIn, float64(countMsgOut)/float64(time.Now().Unix()-stamp)*60)
+				atomic.AddInt64(&stampCount, 1)
+				if atomic.AddInt64(&totalCount, 1)%2500 == 0 {
+					log.Printf("CHECK: nodes checked: %d, ok: %d, rpm: %.2f",
+						totalCount, totalCountOk, float64(stampCount*60)/float64(time.Now().Unix()-stamp))
+					stampCount = 0
+					stamp = time.Now().Unix()
 				}
 			}
-		}
-	}()
+		}()
+	}
+
+	return worker
+}
+
+func startRawNodesFilter(nodeChunksChan chan []types.TimestampedPeerInfo, nodesChan chan *NodeAddr) utils.Worker {
+	worker := utils.NewSimpleWorker(2)
+
+	cleanupInterval := int64(10 * 60)
+	updateInterval := int64(60 * 60)
 
 	go func() {
 		defer worker.Done()
 
-		for {
-			fRes, err := os.OpenFile("update_nodes_response.fifo", os.O_RDONLY, 0)
-			if err != nil {
-				worker.AddError(err)
-				return
-			}
-			defer fRes.Close()
+		nodeStamps := make(map[string]int64)
+		lastCleanupStamp := time.Now().Unix()
+		chunksCount := 0
 
-			scanner := bufio.NewScanner(fRes)
-			for scanner.Scan() {
-				if err := handleMessage(scanner.Text()); err != nil {
-					log.Println(merry.Details(err))
+		for chunk := range nodeChunksChan {
+			now := time.Now().Unix()
+			if now-lastCleanupStamp > cleanupInterval {
+				count := 0
+				for addr, stamp := range nodeStamps {
+					if now-stamp > updateInterval {
+						delete(nodeStamps, addr)
+						count += 1
+					}
 				}
-				atomic.AddInt64(&countMsgIn, 1)
+				log.Printf("FILTER: raw nodes cleanup: %d removed, %d remaining", count, len(nodeStamps))
+				lastCleanupStamp = now
 			}
-			if err := scanner.Err(); err != nil {
-				worker.AddError(err)
-				return
+
+			for _, node := range chunk {
+				addr := JoinHostPort(node.Host, node.Port)
+				if stamp, ok := nodeStamps[addr]; !ok || now-stamp > updateInterval {
+					nodesChan <- &NodeAddr{Host: node.Host, Port: node.Port}
+					nodeStamps[addr] = now
+				}
+			}
+
+			chunksCount += 1
+			if chunksCount%100 == 0 {
+				log.Printf("FILTER: raw nodes in filter: %d", len(nodeStamps))
 			}
 		}
 	}()
+
 	return worker
 }
 
@@ -430,30 +427,110 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 	return worker
 }
 
+func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan []types.TimestampedPeerInfo) utils.Worker {
+	worker := utils.NewSimpleWorker(1)
+
+	go func() {
+		defer worker.Done()
+
+		connHandler := func(c *network.WSChiaConnection) {
+			fmt.Println("new connection from:", c.PeerIDHex())
+
+			c.SetMessageHandler(func(msgID uint16, msg chiautils.FromBytes) {
+				switch msg := msg.(type) {
+				case *types.RequestPeers:
+					c.SendReply(msgID, types.RespondPeers{PeerList: nil})
+				case *types.RespondPeers:
+					log.Printf("LISTEN: some peers: %d", len(msg.PeerList))
+					rawNodesChan <- msg.PeerList
+				case *types.NewPeak,
+					*types.NewCompactVDF,
+					*types.NewSignagePointOrEndOfSubSlot,
+					*types.NewUnfinishedBlock,
+					*types.RequestMempoolTransactions,
+					*types.NewTransaction:
+					// do nothing
+				default:
+					log.Printf("LISTEN: unexpected message: %#v", msg)
+				}
+			})
+
+			hs, err := c.PerformHandshake()
+			if err != nil {
+				log.Printf("LISTEN: handshake error: %s", err)
+				c.Close()
+				return
+			}
+			c.StartRoutines()
+
+			id := c.PeerID()
+			nodeType, _ := types.NodeTypeName(hs.NodeType)
+			nodesChan <- &Node{
+				ID:              id[:],
+				Host:            c.RemoteAddr().(*net.TCPAddr).IP.String(),
+				Port:            hs.ServerPort,
+				ProtocolVersion: hs.ProtocolVersion,
+				SoftwareVersion: hs.SoftwareVersion,
+				NodeType:        nodeType,
+			}
+
+			for i := 0; i < 3; i++ {
+				peers, err := c.RequestPeers()
+				if err != nil {
+					log.Printf("LISTEN: peers error: %s", err)
+					break
+				}
+				log.Println("LISTEN: peers from incoming node:", len(peers.PeerList))
+				rawNodesChan <- peers.PeerList
+			}
+		}
+
+		err := network.ListenOn("0.0.0.0", sslDir+"/ca/chia_ca.crt", sslDir+"/ca/chia_ca.key", connHandler)
+		if err != nil {
+			worker.AddError(err)
+		}
+	}()
+	return worker
+}
+
 func CMDUpdateNodes() error {
+	sslDir := flag.String("ssl-dir", utils.HomeDirOrEmpty("/.chia/mainnet/ssl"), "path to chia/mainnet/ssl directory")
+	flag.Parse()
+
 	db := utils.MakePGConnection()
 	gdb, gdb6, err := utils.MakeGeoIPConnection()
 	if err != nil {
 		return merry.Wrap(err)
 	}
 
-	nodeAddrs := make(chan *NodeAddr, 16)
+	dbNodeAddrs := make(chan *NodeAddr, 16)
+
+	rawNodeChunks := make(chan []types.TimestampedPeerInfo, 16)
+
 	nodesNoLoc := make(chan *Node, 16)
 	rawNodesNoLoc := make(chan *NodeAddr, 16)
+
 	nodesOut := make(chan *Node, 32)
 	rawNodesOut := make(chan *NodeAddr, 256)
 
 	workers := []utils.Worker{
-		startOldNodesLoader(db, nodeAddrs, 512),
-		startNodesChecker(db, nodeAddrs, nodesNoLoc, rawNodesNoLoc),
+		// input
+		startOldNodesLoader(db, dbNodeAddrs, 512),
+		startNodesChecker(db, *sslDir, dbNodeAddrs, nodesNoLoc, rawNodeChunks, 256),
+		startNodesListener(*sslDir, nodesNoLoc, rawNodeChunks),
+		// process
+		startRawNodesFilter(rawNodeChunks, rawNodesNoLoc),
 		startNodesLocationChecker(gdb, gdb6, nodesNoLoc, nodesOut, rawNodesNoLoc, rawNodesOut, 32),
+		// save
 		startNodesSaver(db, nodesOut, 32),
 		startRawNodesSaver(db, rawNodesOut, 512),
 	}
 	go func() {
 		for {
-			log.Printf("UPDATE: chans: %d -> (%d, %d) -> (%d, %d)",
-				len(nodeAddrs), len(nodesNoLoc), len(rawNodesNoLoc), len(nodesOut), len(rawNodesOut))
+			log.Printf("UPDATE: chans: (%d) -> (%d, %d -> %d) -> (%d, %d)",
+				len(dbNodeAddrs),
+				len(nodesNoLoc), len(rawNodeChunks), len(rawNodesNoLoc),
+				len(nodesOut), len(rawNodesOut))
 			time.Sleep(10 * time.Second)
 		}
 	}()
