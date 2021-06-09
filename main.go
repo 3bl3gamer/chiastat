@@ -174,10 +174,22 @@ func CMDListenIncoming() error {
 		// defer c.Close()
 
 		c.SetMessageHandler(func(msgID uint16, msg chiautils.FromBytes) {
-			fmt.Printf("%#v\n", msg)
-			switch msg.(type) {
+			switch msg := msg.(type) {
+			case *types.NewPeak:
+				fmt.Println("new peak, height:", msg.Height)
 			case *types.RequestPeers:
-				c.Reply(msgID, types.MSG_RESPOND_PEERS, types.RespondPeers{PeerList: nil})
+				c.SendReply(msgID, types.RespondPeers{PeerList: nil})
+			case *types.RespondPeers:
+				fmt.Println("unexpected peers", len(msg.PeerList))
+				// a bit more peers (not response), TODO
+			case *types.NewCompactVDF,
+				*types.NewSignagePointOrEndOfSubSlot,
+				*types.NewUnfinishedBlock,
+				*types.RequestMempoolTransactions,
+				*types.NewTransaction:
+				// do nothing
+			default:
+				log.Printf("unexpected message: %#v", msg)
 			}
 		})
 

@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -103,6 +104,14 @@ func readBinaryMessage(ws *websocket.Conn) ([]byte, error) {
 		return nil, merry.Wrap(err)
 	}
 	return buf, nil
+}
+
+func mustGetMessageType(msg interface{}) uint8 {
+	msgType, ok := types.MessageTypeFromStruct(msg)
+	if !ok {
+		panic(fmt.Sprintf("can not get type for message %T", msg))
+	}
+	return msgType
 }
 
 type Result struct {
@@ -349,7 +358,15 @@ func (c *WSChiaConnection) processMessageOfType(msg types.Message, data utils.Fr
 	return nil
 }
 
-func (c *WSChiaConnection) Send(msgType uint8, request utils.ToBytes) chan Result {
+func (c *WSChiaConnection) SendMessage(msg types.Message) {
+	err := c.ws.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msg))
+	if err != nil {
+		c.CloseWithErr(err)
+	}
+}
+
+func (c *WSChiaConnection) SendRequest(request utils.ToBytes) chan Result {
+	msgType := mustGetMessageType(request)
 	c.mutex.Lock()
 
 	// The request nonce is an integer between 0 and 2**16 - 1, which is used to match requests to responses
@@ -377,15 +394,12 @@ func (c *WSChiaConnection) Send(msgType uint8, request utils.ToBytes) chan Resul
 	c.pendingRequests[msg.ID] = respChan
 	c.mutex.Unlock()
 
-	err := c.ws.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msg))
-	if err != nil {
-		c.CloseWithErr(err)
-	}
+	c.SendMessage(msg)
 	return respChan
 }
 
-func (c *WSChiaConnection) SendSync(msgType uint8, request utils.ToBytes) (utils.FromBytes, error) {
-	respChan := c.Send(msgType, request)
+func (c *WSChiaConnection) SendRequestSync(request utils.ToBytes) (utils.FromBytes, error) {
+	respChan := c.SendRequest(request)
 	res := <-respChan
 	if res.Err != nil {
 		return nil, merry.Wrap(res.Err)
@@ -393,20 +407,23 @@ func (c *WSChiaConnection) SendSync(msgType uint8, request utils.ToBytes) (utils
 	return res.Data, nil
 }
 
-func (c *WSChiaConnection) Reply(replyToID uint16, msgType uint8, response utils.ToBytes) {
-	msg := types.Message{
-		Type: msgType,
+func (c *WSChiaConnection) SendReply(replyToID uint16, response utils.ToBytes) {
+	c.SendMessage(types.Message{
+		Type: mustGetMessageType(response),
 		ID:   replyToID,
 		Data: utils.ToByteSlice(response),
-	}
-	err := c.ws.WriteMessage(websocket.BinaryMessage, utils.ToByteSlice(msg))
-	if err != nil {
-		c.CloseWithErr(err)
-	}
+	})
+}
+
+func (c *WSChiaConnection) Send(data utils.ToBytes) {
+	c.SendMessage(types.Message{
+		Type: mustGetMessageType(data),
+		Data: utils.ToByteSlice(data),
+	})
 }
 
 func (c *WSChiaConnection) RequestPeers() (*types.RespondPeers, error) {
-	respChan := c.Send(types.MSG_REQUEST_PEERS, types.RequestPeers{})
+	respChan := c.SendRequest(types.RequestPeers{})
 	res := <-respChan
 	if res.Err != nil {
 		return nil, merry.Wrap(res.Err)
