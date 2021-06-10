@@ -147,7 +147,7 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 				return
 			}
 
-			log.Printf("UPDATE: nodes=%d, raw=%d", len(nodes), len(rawNodes))
+			log.Printf("LOAD: nodes=%d, raw=%d", len(nodes), len(rawNodes))
 			if len(nodes) == 0 && len(rawNodes) == 0 {
 				time.Sleep(10 * time.Second)
 			}
@@ -253,6 +253,8 @@ func startRawNodesFilter(nodeChunksChan chan []types.TimestampedPeerInfo, nodesC
 		nodeStamps := make(map[string]int64)
 		lastCleanupStamp := time.Now().Unix()
 		chunksCount := 0
+		countUsed := 0
+		countTotal := 0
 
 		for chunk := range nodeChunksChan {
 			now := time.Now().Unix()
@@ -273,12 +275,17 @@ func startRawNodesFilter(nodeChunksChan chan []types.TimestampedPeerInfo, nodesC
 				if stamp, ok := nodeStamps[addr]; !ok || now-stamp > updateInterval {
 					nodesChan <- &NodeAddr{Host: node.Host, Port: node.Port}
 					nodeStamps[addr] = now
+					countUsed += 1
 				}
 			}
+			countTotal += len(chunk)
 
 			chunksCount += 1
 			if chunksCount%100 == 0 {
-				log.Printf("FILTER: raw nodes in filter: %d", len(nodeStamps))
+				log.Printf("FILTER: use ratio: %.1f%%, raw nodes in filter: %d",
+					float64(countUsed*100)/float64(countTotal), len(nodeStamps))
+				countUsed = 0
+				countTotal = 0
 			}
 		}
 	}()
@@ -350,6 +357,7 @@ func startNodesLocationChecker(gdb, gdb6 *geoip.GeoIP, nodesIn, nodesOut chan *N
 func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worker {
 	worker := utils.NewSimpleWorker(1)
 	nodesChanI := make(chan interface{}, 16)
+	count := 0
 
 	go func() {
 		for node := range nodesChan {
@@ -379,10 +387,14 @@ func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worke
 				if err != nil {
 					return merry.Wrap(err)
 				}
+				count += 1
+				if count%250 == 0 {
+					log.Printf("SAVE: count: %d", count)
+				}
 			}
 			return nil
 		})
-		log.Println("UPDATE:SAVE:DONE")
+		log.Println("SAVE: done")
 		if err != nil {
 			worker.AddError(err)
 		}
@@ -393,6 +405,7 @@ func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worke
 func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) utils.Worker {
 	worker := utils.NewSimpleWorker(1)
 	nodesChanI := make(chan interface{}, 16)
+	count := 0
 
 	go func() {
 		for node := range nodesChan {
@@ -416,10 +429,14 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 				if err != nil {
 					return merry.Wrap(err)
 				}
+				count += 1
+				if count%25000 == 0 {
+					log.Printf("SAVE:RAW: count: %d", count)
+				}
 			}
 			return nil
 		})
-		log.Println("UPDATE:SAVE:RAW:DONE")
+		log.Println("SAVE:RAW: done")
 		if err != nil {
 			worker.AddError(err)
 		}
