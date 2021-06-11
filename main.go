@@ -111,7 +111,7 @@ func CMDHandshake() error {
 	if err != nil {
 		return merry.Wrap(err)
 	}
-	c, err := network.ConnectTo(cfg, *address)
+	c, err := network.ConnectTo(*address, cfg, nil)
 	if err != nil {
 		return merry.Wrap(err)
 	}
@@ -140,7 +140,7 @@ func CMDRequestPeers() error {
 	if err != nil {
 		return merry.Wrap(err)
 	}
-	c, err := network.ConnectTo(cfg, *address)
+	c, err := network.ConnectTo(*address, cfg, nil)
 	if err != nil {
 		return merry.Wrap(err)
 	}
@@ -207,7 +207,7 @@ func CMDListenIncoming() error {
 		fmt.Println("total peers:", len(peers.PeerList))
 	}
 
-	err := network.ListenOn("0.0.0.0", *sslDir+"/ca/chia_ca.crt", *sslDir+"/ca/chia_ca.key", connHandler)
+	err := network.ListenOn("0.0.0.0", *sslDir+"/ca/chia_ca.crt", *sslDir+"/ca/chia_ca.key", nil, connHandler)
 	return merry.Wrap(err)
 }
 

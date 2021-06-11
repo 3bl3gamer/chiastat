@@ -1,11 +1,15 @@
 package utils
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 type SyncInterval struct {
 	minInterval   int64
 	handler       func()
 	lastCallStamp int64
+	mutex         sync.Mutex
 }
 
 func NewSyncInterval(minInterval time.Duration, handler func()) *SyncInterval {
@@ -13,6 +17,8 @@ func NewSyncInterval(minInterval time.Duration, handler func()) *SyncInterval {
 }
 
 func (p *SyncInterval) Trigger() {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
 	now := time.Now().UnixNano()
 	if now-p.lastCallStamp >= p.minInterval {
 		p.handler()

@@ -21,6 +21,7 @@ import (
 	"github.com/ansel1/merry"
 	"github.com/go-pg/pg/v10"
 	pgtypes "github.com/go-pg/pg/v10/types"
+	"github.com/gorilla/websocket"
 )
 
 func joinHostPort(host string, port uint16) string {
@@ -206,7 +207,7 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			defer worker.Done()
-			cfg, err := network.MakeTSLConfigFromFiles(
+			tlsCfg, err := network.MakeTSLConfigFromFiles(
 				sslDir+"/ca/chia_ca.crt",
 				sslDir+"/full_node/public_full_node.crt",
 				sslDir+"/full_node/public_full_node.key")
@@ -216,7 +217,10 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 			}
 
 			handleNode := func(node *NodeAddr) error {
-				c, err := network.ConnectTo(cfg, joinHostPort(node.Host, node.Port))
+				cfg := &network.WSChiaConnConfig{Dialer: &websocket.Dialer{
+					HandshakeTimeout: 2 * time.Second,
+				}}
+				c, err := network.ConnectTo(joinHostPort(node.Host, node.Port), tlsCfg, cfg)
 				if err != nil {
 					return merry.Wrap(err)
 				}
@@ -610,7 +614,7 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 			}
 		}
 
-		err := network.ListenOn("0.0.0.0", sslDir+"/ca/chia_ca.crt", sslDir+"/ca/chia_ca.key", connHandler)
+		err := network.ListenOn("0.0.0.0", sslDir+"/ca/chia_ca.crt", sslDir+"/ca/chia_ca.key", nil, connHandler)
 		if err != nil {
 			worker.AddError(err)
 		}

@@ -122,11 +122,18 @@ type Result struct {
 
 type MessageHandler func(id uint16, msg utils.FromBytes)
 
+type WSChiaConnConfig struct {
+	Debug      bool
+	Dialer     *websocket.Dialer
+	ServerPort uint16
+}
+
 // https://github.com/Chia-Network/chia-blockchain/blob/latest/chia/server/ws_connection.py
 type WSChiaConnection struct {
 	peerID                 [32]byte
 	ws                     *websocket.Conn
 	isOutbound             bool
+	serverPort             uint16
 	lastRequestNonce       uint16
 	pendingRequests        map[uint16]chan Result
 	incomingMessageHandler MessageHandler
@@ -135,7 +142,10 @@ type WSChiaConnection struct {
 	debug                  bool
 }
 
-func NewWSChiaConnection(ws *websocket.Conn, isOutbound bool) *WSChiaConnection {
+func NewWSChiaConnection(ws *websocket.Conn, isOutbound bool, cfg *WSChiaConnConfig) *WSChiaConnection {
+	if cfg == nil {
+		cfg = &WSChiaConnConfig{}
+	}
 	certs := ws.UnderlyingConn().(*tls.Conn).ConnectionState().PeerCertificates
 	peerID := sha256.Sum256(certs[0].Raw)
 
@@ -145,25 +155,29 @@ func NewWSChiaConnection(ws *websocket.Conn, isOutbound bool) *WSChiaConnection 
 		isOutbound:      isOutbound,
 		pendingRequests: make(map[uint16]chan Result),
 		mutex:           &sync.Mutex{},
-		debug:           true,
+		debug:           cfg.Debug,
 	}
 }
 
-func ConnectTo(tlsConfig *tls.Config, address string) (*WSChiaConnection, error) {
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 5 * time.Second,
-		TLSClientConfig:  tlsConfig,
+func ConnectTo(address string, tlsConfig *tls.Config, cfg *WSChiaConnConfig) (*WSChiaConnection, error) {
+	if cfg == nil {
+		cfg = &WSChiaConnConfig{}
 	}
+	dialer := cfg.Dialer
+	if dialer == nil {
+		dialer = &websocket.Dialer{}
+	}
+	dialer.TLSClientConfig = tlsConfig
 
 	ws, _, err := dialer.Dial("wss://"+address+"/ws", nil)
 	if err != nil {
 		return nil, merry.Wrap(err)
 	}
 
-	return NewWSChiaConnection(ws, true), nil
+	return NewWSChiaConnection(ws, true, cfg), nil
 }
 
-func ListenOn(addr, certFilePath, keyFilePath string, handler func(*WSChiaConnection)) error {
+func ListenOn(addr, certFilePath, keyFilePath string, cfg *WSChiaConnConfig, handler func(*WSChiaConnection)) error {
 	upgrader := websocket.Upgrader{}
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +186,7 @@ func ListenOn(addr, certFilePath, keyFilePath string, handler func(*WSChiaConnec
 			log.Print("WARN: upgrade failed:", err)
 			return
 		}
-		handler(NewWSChiaConnection(ws, false))
+		handler(NewWSChiaConnection(ws, false, cfg))
 	})
 
 	server := &http.Server{
