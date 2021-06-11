@@ -8,10 +8,12 @@ import (
 	"context"
 	"encoding/hex"
 	"flag"
-	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -21,8 +23,21 @@ import (
 	pgtypes "github.com/go-pg/pg/v10/types"
 )
 
-func JoinHostPort(host string, port uint16) string {
+func joinHostPort(host string, port uint16) string {
 	return net.JoinHostPort(host, strconv.Itoa(int(port)))
+}
+
+func askIP() (string, error) {
+	resp, err := http.Get("https://checkip.amazonaws.com/")
+	if err != nil {
+		return "", merry.Wrap(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", merry.Wrap(err)
+	}
+	return strings.TrimSpace(string(body)), nil
 }
 
 type NodeAddr struct {
@@ -183,7 +198,6 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			defer worker.Done()
-
 			cfg, err := network.MakeTSLConfigFromFiles(
 				sslDir+"/ca/chia_ca.crt",
 				sslDir+"/full_node/public_full_node.crt",
@@ -194,7 +208,7 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 			}
 
 			handleNode := func(node *NodeAddr) error {
-				c, err := network.ConnectTo(cfg, JoinHostPort(node.Host, node.Port))
+				c, err := network.ConnectTo(cfg, joinHostPort(node.Host, node.Port))
 				if err != nil {
 					return merry.Wrap(err)
 				}
@@ -277,7 +291,7 @@ func startRawNodesFilter(db *pg.DB, nodeChunksChan chan []types.TimestampedPeerI
 		if err == nil {
 			now := time.Now().Unix()
 			for i, node := range prefillNodes {
-				nodeStamps[JoinHostPort(node.Host, node.Port)] = now - updateInterval*int64(i)/int64(len(prefillNodes))
+				nodeStamps[joinHostPort(node.Host, node.Port)] = now - updateInterval*int64(i)/int64(len(prefillNodes))
 			}
 			log.Printf("FILTER: prefilled with %d node(s)", len(nodeStamps))
 		} else {
@@ -299,7 +313,7 @@ func startRawNodesFilter(db *pg.DB, nodeChunksChan chan []types.TimestampedPeerI
 			}
 
 			for _, node := range chunk {
-				addr := JoinHostPort(node.Host, node.Port)
+				addr := joinHostPort(node.Host, node.Port)
 				if stamp, ok := nodeStamps[addr]; !ok || now-stamp > updateInterval {
 					nodesChan <- &NodeAddr{Host: node.Host, Port: node.Port}
 					nodeStamps[addr] = now
@@ -493,14 +507,15 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 		defer worker.Done()
 
 		connHandler := func(c *network.WSChiaConnection) {
-			fmt.Println("LISTEN: new connection from:", c.PeerIDHex())
+			shortID := c.PeerIDHex()[0:8]
+			log.Printf("LISTEN: new connection from: %s", shortID)
 
 			c.SetMessageHandler(func(msgID uint16, msg chiautils.FromBytes) {
 				switch msg := msg.(type) {
 				case *types.RequestPeers:
 					c.SendReply(msgID, types.RespondPeers{PeerList: nil})
 				case *types.RespondPeers:
-					log.Printf("LISTEN: some peers: %d", len(msg.PeerList))
+					log.Printf("LISTEN: %s: some peers: %d", shortID, len(msg.PeerList))
 					rawNodesChan <- msg.PeerList
 				case *types.NewPeak,
 					*types.NewCompactVDF,
@@ -510,13 +525,13 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 					*types.NewTransaction:
 					// do nothing
 				default:
-					log.Printf("LISTEN: unexpected message: %#v", msg)
+					log.Printf("LISTEN: %s: unexpected message: %#v", shortID, msg)
 				}
 			})
 
 			hs, err := c.PerformHandshake()
 			if err != nil {
-				log.Printf("LISTEN: handshake error: %s", err)
+				log.Printf("LISTEN: %s: handshake error: %s", shortID, err)
 				c.Close()
 				return
 			}
@@ -533,15 +548,32 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 				NodeType:        nodeType,
 			}
 
-			for i := 0; i < 3; i++ {
-				peers, err := c.RequestPeers()
-				if err != nil {
-					log.Printf("LISTEN: peers error: %s", err)
-					break
+			go func() {
+				defer c.Close()
+				for i := 0; ; i++ {
+					peers, err := c.RequestPeers()
+					if err != nil {
+						log.Printf("LISTEN: %s: peers error: %s", shortID, err)
+						break
+					}
+					log.Printf("LISTEN: %s: peers from incoming node: %d", shortID, len(peers.PeerList))
+					rawNodesChan <- peers.PeerList
+
+					if i%60 == 0 {
+						ip, err := askIP()
+						if err == nil {
+							c.Send(types.RespondPeers{PeerList: []types.TimestampedPeerInfo{
+								{Host: ip, Port: network.SERVER_PORT, Timestamp: uint64(time.Now().Unix())},
+							}})
+							log.Printf("LISTEN: %s: self advertised", shortID)
+						} else {
+							log.Printf("LISTEN: %s: ask IP error: %s", shortID, err)
+						}
+					}
+
+					time.Sleep(time.Minute)
 				}
-				log.Println("LISTEN: peers from incoming node:", len(peers.PeerList))
-				rawNodesChan <- peers.PeerList
-			}
+			}()
 		}
 
 		err := network.ListenOn("0.0.0.0", sslDir+"/ca/chia_ca.crt", sslDir+"/ca/chia_ca.key", connHandler)
