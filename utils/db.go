@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"time"
 
 	"github.com/abh/geoip"
 	"github.com/ansel1/merry"
@@ -28,26 +29,38 @@ func MakeGeoIPConnection() (*geoip.GeoIP, *geoip.GeoIP, error) {
 	return gdb, gdb6, nil
 }
 
-func SaveChunked(db *pg.DB, chunkSize int, channel chan interface{}, handler func(tx *pg.Tx, items []interface{}) error) error {
+func SaveChunked(
+	db *pg.DB, chunkSize int, channel chan interface{},
+	handler func(tx *pg.Tx, items []interface{}) error,
+	saveHandler func(duration time.Duration),
+) error {
 	var err error
 	ctx := context.Background()
 	items := make([]interface{}, 0, chunkSize)
 	for item := range channel {
 		items = append(items, item)
 		if len(items) >= chunkSize {
+			stt := time.Now()
 			err = db.RunInTransaction(ctx, func(tx *pg.Tx) error {
 				return merry.Wrap(handler(tx, items))
 			})
 			if err != nil {
 				return merry.Wrap(err)
 			}
+			if saveHandler != nil {
+				saveHandler(time.Now().Sub(stt))
+			}
 			items = items[:0]
 		}
 	}
 	if len(items) > 0 {
+		stt := time.Now()
 		err = db.RunInTransaction(ctx, func(tx *pg.Tx) error {
 			return merry.Wrap(handler(tx, items))
 		})
+		if saveHandler != nil {
+			saveHandler(time.Now().Sub(stt))
+		}
 	}
 	return merry.Wrap(err)
 }

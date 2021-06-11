@@ -24,6 +24,6 @@ fi
 
 if [ $restart = true ]; then
     for name in chiastat-update; do
-        systemctl restart $name
+        sudo systemctl restart $name
     done
 fi

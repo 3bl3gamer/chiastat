@@ -114,7 +114,7 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 				_, err := tx.Query(&rawNodes, `
 					SELECT host, port FROM raw_nodes
 					WHERE NOT seems_off
-					  AND checked_at < now() - INTERVAL '5 hours'
+					  AND (checked_at IS NULL OR checked_at < now() - INTERVAL '5 hours')
 					ORDER BY checked_at ASC NULLS FIRST
 					LIMIT ?
 					FOR NO KEY UPDATE`, chunkSize)
@@ -144,7 +144,7 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 				_, err := tx.Query(&nodes, `
 					SELECT id, host, port FROM nodes
 					WHERE NOT seems_off
-					  AND checked_at < now() - INTERVAL '5 hours'
+					  AND (checked_at IS NULL OR checked_at < now() - INTERVAL '5 hours')
 					ORDER BY checked_at ASC NULLS FIRST
 					LIMIT ?
 					FOR NO KEY UPDATE`, chunkSize)
@@ -193,7 +193,7 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 	var totalCount int64 = 0
 	var totalCountOk int64 = 0
 	var stampCount int64 = 0
-	stamp := time.Now().Unix()
+	stamp := time.Now().UnixNano()
 
 	for i := 0; i < concurrency; i++ {
 		go func() {
@@ -254,10 +254,10 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 				atomic.AddInt64(&stampCount, 1)
 				if atomic.AddInt64(&totalCount, 1)%2500 == 0 {
 					curStampCount := atomic.SwapInt64(&stampCount, 0)
-					curStamp := atomic.SwapInt64(&stamp, time.Now().Unix())
+					curStamp := atomic.SwapInt64(&stamp, time.Now().UnixNano())
 					log.Printf("CHECK: nodes checked: %d, ok: %d, rpm: %.2f",
 						atomic.LoadInt64(&totalCount), atomic.LoadInt64(&totalCountOk),
-						float64(curStampCount*60)/float64(time.Now().Unix()-curStamp))
+						float64(curStampCount*60*1000*1000*1000)/float64(time.Now().UnixNano()-curStamp))
 				}
 			}
 		}()
@@ -281,12 +281,14 @@ func startRawNodesFilter(db *pg.DB, nodeChunksChan chan []types.TimestampedPeerI
 		countUsed := 0
 		countTotal := 0
 
-		prefillNodes := make([]*NodeAddr, 500*1000)
+		prefillNodes := make([]*NodeAddr, 250*1000)
 		_, err := db.Query(&prefillNodes, `
 			SELECT host, port FROM raw_nodes
 			WHERE NOT seems_off
+			  AND checked_at IS NOT NULL                  --for speedup
 			  AND checked_at > now() - INTERVAL '6 hours' --for speedup
 			  AND updated_at > now() - ? * INTERVAL '1 second'
+			ORDER BY checked_at ASC NULLS FIRST
 			LIMIT ?`, updateInterval, len(prefillNodes))
 		if err == nil {
 			now := time.Now().Unix()
@@ -414,7 +416,6 @@ func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worke
 		err := utils.SaveChunked(db, chunkSize, nodesChanI, func(tx *pg.Tx, items []interface{}) error {
 			for _, nodeI := range items {
 				node := nodeI.(*Node)
-				stt := time.Now().UnixNano()
 				_, err := tx.Exec(`
 					INSERT INTO nodes (id, host, port, protocol_version, software_version, node_type, country, updated_at)
 					VALUES (?, ?, ?, ?, ?, ?, ?, now())
@@ -431,17 +432,18 @@ func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worke
 				if err != nil {
 					return merry.Wrap(err)
 				}
-				savesDurSum += (time.Now().UnixNano() - stt) / 1000 / 1000
-				savesDurCount += 1
 				count += 1
-				if count%250 == 0 {
-					log.Printf("SAVE: count=%d (avg %d ms)",
-						count, savesDurSum/savesDurCount)
-					savesDurSum = 0
-					savesDurCount = 0
-				}
 			}
 			return nil
+		}, func(saveDur time.Duration) {
+			savesDurSum += int64(saveDur / time.Millisecond)
+			savesDurCount += 1
+			// if savesDurCount%5 == 0 {
+			log.Printf("SAVE: count=%d (avg %d ms)",
+				count, savesDurSum/savesDurCount)
+			savesDurSum = 0
+			savesDurCount = 0
+			// }
 		})
 		log.Println("SAVE: done")
 		if err != nil {
@@ -469,7 +471,6 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 		err := utils.SaveChunked(db, chunkSize, nodesChanI, func(tx *pg.Tx, items []interface{}) error {
 			for _, nodeI := range items {
 				node := nodeI.(*NodeAddr)
-				stt := time.Now().UnixNano()
 				_, err := tx.Exec(`
 					INSERT INTO raw_nodes (host, port, country, updated_at) VALUES (?, ?, ?, now())
 					ON CONFLICT (host, port) DO UPDATE SET
@@ -480,17 +481,18 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 				if err != nil {
 					return merry.Wrap(err)
 				}
-				savesDurSum += (time.Now().UnixNano() - stt) / 1000 / 1000
-				savesDurCount += 1
 				count += 1
-				if count%25000 == 0 {
-					log.Printf("SAVE:RAW: count: %d (avg %d ms)",
-						count, savesDurSum/savesDurCount)
-					savesDurSum = 0
-					savesDurCount = 0
-				}
 			}
 			return nil
+		}, func(saveDur time.Duration) {
+			savesDurSum += int64(saveDur / time.Millisecond)
+			savesDurCount += 1
+			if savesDurCount%10 == 0 {
+				log.Printf("SAVE:RAW: count: %d (avg %d ms)",
+					count, savesDurSum/savesDurCount)
+				savesDurSum = 0
+				savesDurCount = 0
+			}
 		})
 		log.Println("SAVE:RAW: done")
 		if err != nil {
@@ -509,6 +511,7 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 
 		var connCount int64
 		connHandler := func(c *network.WSChiaConnection) {
+			c.SetDebug(false)
 			atomic.AddInt64(&connCount, 1)
 			defer func() {
 				atomic.AddInt64(&connCount, -1)
@@ -567,7 +570,7 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 					log.Printf("LISTEN: %s: peers error: %s", shortID, err)
 					break
 				}
-				log.Printf("LISTEN: %s: peers from incoming node: %d", shortID, len(peers.PeerList))
+				// log.Printf("LISTEN: %s: peers from incoming node: %d", shortID, len(peers.PeerList))
 				rawNodesChan <- peers.PeerList
 
 				if i%60 == 59 {
@@ -576,7 +579,7 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 						c.Send(types.RespondPeers{PeerList: []types.TimestampedPeerInfo{
 							{Host: ip, Port: network.SERVER_PORT, Timestamp: uint64(time.Now().Unix())},
 						}})
-						log.Printf("LISTEN: %s: self advertised", shortID)
+						// log.Printf("LISTEN: %s: self advertised", shortID)
 					} else {
 						log.Printf("LISTEN: %s: ask IP error: %s", shortID, err)
 					}
@@ -654,7 +657,7 @@ func CMDUpdateNodes() error {
 	workers := []utils.Worker{
 		// input
 		startOldNodesLoader(db, dbNodeAddrs, 512),
-		startNodesChecker(db, *sslDir, dbNodeAddrs, nodesNoLoc, rawNodeChunks, 128),
+		startNodesChecker(db, *sslDir, dbNodeAddrs, nodesNoLoc, rawNodeChunks, 256),
 		startNodesListener(*sslDir, nodesNoLoc, rawNodeChunks),
 		// process
 		startRawNodesFilter(db, rawNodeChunks, rawNodesNoLoc),
