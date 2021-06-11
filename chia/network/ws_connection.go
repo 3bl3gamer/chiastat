@@ -23,8 +23,8 @@ import (
 
 const NETWORK_ID = "mainnet"
 const PROTOCOL_VERSION = "0.0.32"
-const SOFTWARE_VERSION = "1.1.6"
-const SERVER_PORT = 8445
+const SOFTWARE_VERSION = "1.1.7"
+const SERVER_PORT = 8444
 
 func MakeTSLConfigFromFiles(caCertPath, nodeCertPath, nodeKeyPath string) (*tls.Config, error) {
 	caCertBuf, err := os.ReadFile(caCertPath)

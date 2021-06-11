@@ -92,15 +92,18 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 		for {
 			nodes := nodes[:0]
 			rawNodes := rawNodes[:0]
+			var getDur, updDur int64
+			var getDurRaw, updDurRaw int64
 			err := db.RunInTransaction(ctx, func(tx *pg.Tx) error {
+				stt := time.Now().UnixNano()
 				_, err := tx.Query(&rawNodes, `
 					SELECT host, port FROM raw_nodes
-					WHERE checked_at IS NULL
-					   OR (checked_at < now() - INTERVAL '5 hours'
-					       AND updated_at > now() - INTERVAL '7 days')
+					WHERE NOT seems_off
+					  AND checked_at < now() - INTERVAL '5 hours'
 					ORDER BY checked_at ASC NULLS FIRST
 					LIMIT ?
 					FOR NO KEY UPDATE`, chunkSize)
+				getDurRaw = time.Now().UnixNano() - stt
 				if utils.IsPGDeadlock(err) {
 					return nil
 				}
@@ -110,9 +113,11 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 				if len(rawNodes) == 0 {
 					return nil
 				}
+				stt = time.Now().UnixNano()
 				_, err = tx.Exec(`
 					UPDATE raw_nodes SET checked_at = NOW() WHERE (host,port) IN (?)`,
 					NodeAddrListAsPGTuple(rawNodes))
+				updDurRaw = time.Now().UnixNano() - stt
 				return merry.Wrap(err)
 			})
 			if err != nil {
@@ -120,14 +125,15 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 				return
 			}
 			err = db.RunInTransaction(ctx, func(tx *pg.Tx) error {
+				stt := time.Now().UnixNano()
 				_, err := tx.Query(&nodes, `
 					SELECT id, host, port FROM nodes
-					WHERE checked_at IS NULL
-					   OR (checked_at < now() - INTERVAL '5 hours'
-					       AND updated_at > now() - INTERVAL '7 days')
+					WHERE NOT seems_off
+					  AND checked_at < now() - INTERVAL '5 hours'
 					ORDER BY checked_at ASC NULLS FIRST
 					LIMIT ?
 					FOR NO KEY UPDATE`, chunkSize)
+				getDur = time.Now().UnixNano() - stt
 				if utils.IsPGDeadlock(err) {
 					return nil
 				}
@@ -137,9 +143,11 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 				if len(nodes) == 0 {
 					return nil
 				}
+				stt = time.Now().UnixNano()
 				_, err = tx.Exec(`
 					UPDATE nodes SET checked_at = NOW() WHERE id IN (?)`,
 					NodeListAsPGIDs(nodes))
+				updDur = time.Now().UnixNano() - stt
 				return merry.Wrap(err)
 			})
 			if err != nil {
@@ -147,7 +155,9 @@ func startOldNodesLoader(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) uti
 				return
 			}
 
-			log.Printf("LOAD: nodes=%d, raw=%d", len(nodes), len(rawNodes))
+			log.Printf("LOAD: nodes=%d (get:%dms, upd:%dms), raw=%d (get:%dms, upd:%dms)",
+				len(nodes), getDur/1000/1000, updDur/1000/1000,
+				len(rawNodes), getDurRaw/1000/1000, updDurRaw/1000/1000)
 			if len(nodes) == 0 && len(rawNodes) == 0 {
 				time.Sleep(10 * time.Second)
 			}
@@ -198,7 +208,7 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 				id := c.PeerID()
 				nodeType, _ := types.NodeTypeName(hs.NodeType)
 				for len(nodesOutChan) == cap(nodesOutChan) {
-					time.Sleep(time.Second)
+					time.Sleep(time.Millisecond)
 				}
 				nodesOutChan <- &Node{
 					ID:              id[:],
@@ -215,7 +225,7 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 						break
 					}
 					for len(rawNodesOutChan) == cap(rawNodesOutChan) {
-						time.Sleep(time.Second)
+						time.Sleep(time.Millisecond)
 					}
 					rawNodesOutChan <- peers.PeerList
 				}
@@ -229,10 +239,11 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 				}
 				atomic.AddInt64(&stampCount, 1)
 				if atomic.AddInt64(&totalCount, 1)%2500 == 0 {
+					curStampCount := atomic.SwapInt64(&stampCount, 0)
+					curStamp := atomic.SwapInt64(&stamp, time.Now().Unix())
 					log.Printf("CHECK: nodes checked: %d, ok: %d, rpm: %.2f",
-						totalCount, totalCountOk, float64(stampCount*60)/float64(time.Now().Unix()-stamp))
-					stampCount = 0
-					stamp = time.Now().Unix()
+						atomic.LoadInt64(&totalCount), atomic.LoadInt64(&totalCountOk),
+						float64(curStampCount*60)/float64(time.Now().Unix()-curStamp))
 				}
 			}
 		}()
@@ -241,7 +252,7 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 	return worker
 }
 
-func startRawNodesFilter(nodeChunksChan chan []types.TimestampedPeerInfo, nodesChan chan *NodeAddr) utils.Worker {
+func startRawNodesFilter(db *pg.DB, nodeChunksChan chan []types.TimestampedPeerInfo, nodesChan chan *NodeAddr) utils.Worker {
 	worker := utils.NewSimpleWorker(2)
 
 	cleanupInterval := int64(10 * 60)
@@ -255,6 +266,23 @@ func startRawNodesFilter(nodeChunksChan chan []types.TimestampedPeerInfo, nodesC
 		chunksCount := 0
 		countUsed := 0
 		countTotal := 0
+
+		prefillNodes := make([]*NodeAddr, 500*1000)
+		_, err := db.Query(&prefillNodes, `
+			SELECT host, port FROM raw_nodes
+			WHERE NOT seems_off
+			  AND checked_at > now() - INTERVAL '6 hours' --for speedup
+			  AND updated_at > now() - ? * INTERVAL '1 second'
+			LIMIT ?`, updateInterval, len(prefillNodes))
+		if err == nil {
+			now := time.Now().Unix()
+			for i, node := range prefillNodes {
+				nodeStamps[JoinHostPort(node.Host, node.Port)] = now - updateInterval*int64(i)/int64(len(prefillNodes))
+			}
+			log.Printf("FILTER: prefilled with %d node(s)", len(nodeStamps))
+		} else {
+			log.Printf("FILTER: failed to prefill: %s", err)
+		}
 
 		for chunk := range nodeChunksChan {
 			now := time.Now().Unix()
@@ -368,9 +396,11 @@ func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worke
 
 	go func() {
 		defer worker.Done()
+		var savesDurSum, savesDurCount int64
 		err := utils.SaveChunked(db, chunkSize, nodesChanI, func(tx *pg.Tx, items []interface{}) error {
 			for _, nodeI := range items {
 				node := nodeI.(*Node)
+				stt := time.Now().UnixNano()
 				_, err := tx.Exec(`
 					INSERT INTO nodes (id, host, port, protocol_version, software_version, node_type, country, updated_at)
 					VALUES (?, ?, ?, ?, ?, ?, ?, now())
@@ -387,9 +417,14 @@ func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worke
 				if err != nil {
 					return merry.Wrap(err)
 				}
+				savesDurSum += (time.Now().UnixNano() - stt) / 1000 / 1000
+				savesDurCount += 1
 				count += 1
 				if count%250 == 0 {
-					log.Printf("SAVE: count: %d", count)
+					log.Printf("SAVE: count=%d (avg %d ms)",
+						count, savesDurSum/savesDurCount)
+					savesDurSum = 0
+					savesDurCount = 0
 				}
 			}
 			return nil
@@ -416,9 +451,11 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 
 	go func() {
 		defer worker.Done()
+		var savesDurSum, savesDurCount int64
 		err := utils.SaveChunked(db, chunkSize, nodesChanI, func(tx *pg.Tx, items []interface{}) error {
 			for _, nodeI := range items {
 				node := nodeI.(*NodeAddr)
+				stt := time.Now().UnixNano()
 				_, err := tx.Exec(`
 					INSERT INTO raw_nodes (host, port, country, updated_at) VALUES (?, ?, ?, now())
 					ON CONFLICT (host, port) DO UPDATE SET
@@ -429,9 +466,14 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 				if err != nil {
 					return merry.Wrap(err)
 				}
+				savesDurSum += (time.Now().UnixNano() - stt) / 1000 / 1000
+				savesDurCount += 1
 				count += 1
 				if count%25000 == 0 {
-					log.Printf("SAVE:RAW: count: %d", count)
+					log.Printf("SAVE:RAW: count: %d (avg %d ms)",
+						count, savesDurSum/savesDurCount)
+					savesDurSum = 0
+					savesDurCount = 0
 				}
 			}
 			return nil
@@ -451,7 +493,7 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 		defer worker.Done()
 
 		connHandler := func(c *network.WSChiaConnection) {
-			fmt.Println("new connection from:", c.PeerIDHex())
+			fmt.Println("LISTEN: new connection from:", c.PeerIDHex())
 
 			c.SetMessageHandler(func(msgID uint16, msg chiautils.FromBytes) {
 				switch msg := msg.(type) {
@@ -510,6 +552,43 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 	return worker
 }
 
+func startSeemsOffUpdater(db *pg.DB) utils.Worker {
+	worker := utils.NewSimpleWorker(1)
+
+	go func() {
+		defer worker.Done()
+		for {
+			stt := time.Now().UnixNano()
+			_, err := db.Exec(`
+				UPDATE nodes SET seems_off = true
+				WHERE NOT seems_off
+				  AND checked_at IS NOT NULL
+				  AND updated_at < NOW() - INTERVAL '7 days'`)
+			if err != nil {
+				log.Printf("SEEMS_OFF:RAW: error: %s", err)
+			}
+			dur := time.Now().UnixNano() - stt
+
+			stt = time.Now().UnixNano()
+			_, err = db.Exec(`
+				UPDATE raw_nodes SET seems_off = true
+				WHERE NOT seems_off
+				  AND checked_at IS NOT NULL
+				  AND updated_at < NOW() - INTERVAL '7 days'`)
+			if err != nil {
+				log.Printf("SEEMS_OFF: raw error: %s", err)
+			}
+			durRaw := time.Now().UnixNano() - stt
+
+			log.Printf("SEEMS_OFF: updated nodes in %d ms, raw in %d ms",
+				dur/1000/1000, durRaw/1000/1000)
+			time.Sleep(30 * time.Minute)
+		}
+	}()
+
+	return worker
+}
+
 func CMDUpdateNodes() error {
 	sslDir := flag.String("ssl-dir", utils.HomeDirOrEmpty("/.chia/mainnet/ssl"), "path to chia/mainnet/ssl directory")
 	flag.Parse()
@@ -520,7 +599,7 @@ func CMDUpdateNodes() error {
 		return merry.Wrap(err)
 	}
 
-	dbNodeAddrs := make(chan *NodeAddr, 16)
+	dbNodeAddrs := make(chan *NodeAddr, 32)
 
 	rawNodeChunks := make(chan []types.TimestampedPeerInfo, 16)
 
@@ -533,14 +612,16 @@ func CMDUpdateNodes() error {
 	workers := []utils.Worker{
 		// input
 		startOldNodesLoader(db, dbNodeAddrs, 512),
-		startNodesChecker(db, *sslDir, dbNodeAddrs, nodesNoLoc, rawNodeChunks, 256),
+		startNodesChecker(db, *sslDir, dbNodeAddrs, nodesNoLoc, rawNodeChunks, 128),
 		startNodesListener(*sslDir, nodesNoLoc, rawNodeChunks),
 		// process
-		startRawNodesFilter(rawNodeChunks, rawNodesNoLoc),
+		startRawNodesFilter(db, rawNodeChunks, rawNodesNoLoc),
 		startNodesLocationChecker(gdb, gdb6, nodesNoLoc, nodesOut, rawNodesNoLoc, rawNodesOut, 32),
 		// save
 		startNodesSaver(db, nodesOut, 32),
 		startRawNodesSaver(db, rawNodesOut, 512),
+		// misc
+		startSeemsOffUpdater(db),
 	}
 	go func() {
 		for {
