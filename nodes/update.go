@@ -502,13 +502,21 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 
 func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan []types.TimestampedPeerInfo) utils.Worker {
 	worker := utils.NewSimpleWorker(1)
+	const connLimit = 1024
 
 	go func() {
 		defer worker.Done()
 
+		var connCount int64
 		connHandler := func(c *network.WSChiaConnection) {
+			atomic.AddInt64(&connCount, 1)
+			defer func() {
+				atomic.AddInt64(&connCount, -1)
+				c.Close()
+			}()
+
 			shortID := c.PeerIDHex()[0:8]
-			log.Printf("LISTEN: new connection from: %s", shortID)
+			log.Printf("LISTEN: new connection from: %s, total: %d", shortID, atomic.LoadInt64(&connCount))
 
 			c.SetMessageHandler(func(msgID uint16, msg chiautils.FromBytes) {
 				switch msg := msg.(type) {
@@ -517,6 +525,8 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 				case *types.RespondPeers:
 					log.Printf("LISTEN: %s: some peers: %d", shortID, len(msg.PeerList))
 					rawNodesChan <- msg.PeerList
+				case *types.RequestBlock:
+					c.SendReply(msgID, types.RejectBlock{Height: msg.Height})
 				case *types.NewPeak,
 					*types.NewCompactVDF,
 					*types.NewSignagePointOrEndOfSubSlot,
@@ -535,6 +545,9 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 				c.Close()
 				return
 			}
+			if atomic.LoadInt64(&connCount) > connLimit {
+				return
+			}
 			c.StartRoutines()
 
 			id := c.PeerID()
@@ -548,32 +561,29 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 				NodeType:        nodeType,
 			}
 
-			go func() {
-				defer c.Close()
-				for i := 0; ; i++ {
-					peers, err := c.RequestPeers()
-					if err != nil {
-						log.Printf("LISTEN: %s: peers error: %s", shortID, err)
-						break
-					}
-					log.Printf("LISTEN: %s: peers from incoming node: %d", shortID, len(peers.PeerList))
-					rawNodesChan <- peers.PeerList
-
-					if i%60 == 0 {
-						ip, err := askIP()
-						if err == nil {
-							c.Send(types.RespondPeers{PeerList: []types.TimestampedPeerInfo{
-								{Host: ip, Port: network.SERVER_PORT, Timestamp: uint64(time.Now().Unix())},
-							}})
-							log.Printf("LISTEN: %s: self advertised", shortID)
-						} else {
-							log.Printf("LISTEN: %s: ask IP error: %s", shortID, err)
-						}
-					}
-
-					time.Sleep(time.Minute)
+			for i := 0; ; i++ {
+				peers, err := c.RequestPeers()
+				if err != nil {
+					log.Printf("LISTEN: %s: peers error: %s", shortID, err)
+					break
 				}
-			}()
+				log.Printf("LISTEN: %s: peers from incoming node: %d", shortID, len(peers.PeerList))
+				rawNodesChan <- peers.PeerList
+
+				if i%60 == 59 {
+					ip, err := askIP()
+					if err == nil {
+						c.Send(types.RespondPeers{PeerList: []types.TimestampedPeerInfo{
+							{Host: ip, Port: network.SERVER_PORT, Timestamp: uint64(time.Now().Unix())},
+						}})
+						log.Printf("LISTEN: %s: self advertised", shortID)
+					} else {
+						log.Printf("LISTEN: %s: ask IP error: %s", shortID, err)
+					}
+				}
+
+				time.Sleep(time.Minute)
+			}
 		}
 
 		err := network.ListenOn("0.0.0.0", sslDir+"/ca/chia_ca.crt", sslDir+"/ca/chia_ca.key", connHandler)

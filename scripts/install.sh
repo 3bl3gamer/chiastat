@@ -23,7 +23,7 @@ if [ $migrate = true ]; then
 fi
 
 if [ $restart = true ]; then
-    for name in chia chiastat-update; do
+    for name in chiastat-update; do
         systemctl restart $name
     done
 fi
