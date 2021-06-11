@@ -195,6 +195,14 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 	var stampCount int64 = 0
 	stamp := time.Now().UnixNano()
 
+	logPrint := utils.NewSyncInterval(10*time.Second, func() {
+		curStampCount := atomic.SwapInt64(&stampCount, 0)
+		curStamp := atomic.SwapInt64(&stamp, time.Now().UnixNano())
+		log.Printf("CHECK: nodes checked: %d, ok: %d, rpm: %.2f",
+			atomic.LoadInt64(&totalCount), atomic.LoadInt64(&totalCountOk),
+			float64(curStampCount*60*1000*1000*1000)/float64(time.Now().UnixNano()-curStamp))
+	})
+
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			defer worker.Done()
@@ -252,13 +260,9 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 					atomic.AddInt64(&totalCountOk, 1)
 				}
 				atomic.AddInt64(&stampCount, 1)
-				if atomic.AddInt64(&totalCount, 1)%2500 == 0 {
-					curStampCount := atomic.SwapInt64(&stampCount, 0)
-					curStamp := atomic.SwapInt64(&stamp, time.Now().UnixNano())
-					log.Printf("CHECK: nodes checked: %d, ok: %d, rpm: %.2f",
-						atomic.LoadInt64(&totalCount), atomic.LoadInt64(&totalCountOk),
-						float64(curStampCount*60*1000*1000*1000)/float64(time.Now().UnixNano()-curStamp))
-				}
+				atomic.AddInt64(&totalCount, 1)
+				atomic.AddInt64(&totalCount, 1)
+				logPrint.Trigger()
 			}
 		}()
 	}
@@ -280,6 +284,13 @@ func startRawNodesFilter(db *pg.DB, nodeChunksChan chan []types.TimestampedPeerI
 		chunksCount := 0
 		countUsed := 0
 		countTotal := 0
+
+		logPrint := utils.NewSyncInterval(10*time.Second, func() {
+			log.Printf("FILTER: use ratio: %.1f%%, raw nodes in filter: %d",
+				float64(countUsed*100)/float64(countTotal), len(nodeStamps))
+			countUsed = 0
+			countTotal = 0
+		})
 
 		prefillNodes := make([]*NodeAddr, 250*1000)
 		_, err := db.Query(&prefillNodes, `
@@ -325,12 +336,7 @@ func startRawNodesFilter(db *pg.DB, nodeChunksChan chan []types.TimestampedPeerI
 			countTotal += len(chunk)
 
 			chunksCount += 1
-			if chunksCount%100 == 0 {
-				log.Printf("FILTER: use ratio: %.1f%%, raw nodes in filter: %d",
-					float64(countUsed*100)/float64(countTotal), len(nodeStamps))
-				countUsed = 0
-				countTotal = 0
-			}
+			logPrint.Trigger()
 		}
 	}()
 
@@ -412,7 +418,16 @@ func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worke
 
 	go func() {
 		defer worker.Done()
+
 		var savesDurSum, savesDurCount int64
+		logPrint := utils.NewSyncInterval(10*time.Second, func() {
+			log.Printf("SAVE: count: +%d (%d chunks, avg %d ms)",
+				count, savesDurCount, savesDurSum/savesDurCount)
+			savesDurSum = 0
+			savesDurCount = 0
+			count = 0
+		})
+
 		err := utils.SaveChunked(db, chunkSize, nodesChanI, func(tx *pg.Tx, items []interface{}) error {
 			for _, nodeI := range items {
 				node := nodeI.(*Node)
@@ -438,12 +453,7 @@ func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worke
 		}, func(saveDur time.Duration) {
 			savesDurSum += int64(saveDur / time.Millisecond)
 			savesDurCount += 1
-			// if savesDurCount%5 == 0 {
-			log.Printf("SAVE: count=%d (avg %d ms)",
-				count, savesDurSum/savesDurCount)
-			savesDurSum = 0
-			savesDurCount = 0
-			// }
+			logPrint.Trigger()
 		})
 		log.Println("SAVE: done")
 		if err != nil {
@@ -467,7 +477,16 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 
 	go func() {
 		defer worker.Done()
+
 		var savesDurSum, savesDurCount int64
+		logPrint := utils.NewSyncInterval(10*time.Second, func() {
+			log.Printf("SAVE:RAW: count: +%d (%d chunks, avg %d ms)",
+				count, savesDurCount, savesDurSum/savesDurCount)
+			savesDurSum = 0
+			savesDurCount = 0
+			count = 0
+		})
+
 		err := utils.SaveChunked(db, chunkSize, nodesChanI, func(tx *pg.Tx, items []interface{}) error {
 			for _, nodeI := range items {
 				node := nodeI.(*NodeAddr)
@@ -487,12 +506,7 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 		}, func(saveDur time.Duration) {
 			savesDurSum += int64(saveDur / time.Millisecond)
 			savesDurCount += 1
-			if savesDurCount%10 == 0 {
-				log.Printf("SAVE:RAW: count: %d (avg %d ms)",
-					count, savesDurSum/savesDurCount)
-				savesDurSum = 0
-				savesDurCount = 0
-			}
+			logPrint.Trigger()
 		})
 		log.Println("SAVE:RAW: done")
 		if err != nil {
@@ -509,7 +523,14 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 	go func() {
 		defer worker.Done()
 
-		var connCount int64
+		var connCount, peersCount, unexpectedPeersCount int64
+		logPrint := utils.NewSyncInterval(10*time.Second, func() {
+			peersCount := atomic.SwapInt64(&peersCount, 0)
+			unexpCount := atomic.SwapInt64(&unexpectedPeersCount, 0)
+			log.Printf("LISTEN: conns: %d, peers: +%d, unexp.peers: +%d",
+				atomic.LoadInt64(&connCount), peersCount, unexpCount)
+		})
+
 		connHandler := func(c *network.WSChiaConnection) {
 			c.SetDebug(false)
 			atomic.AddInt64(&connCount, 1)
@@ -519,14 +540,14 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 			}()
 
 			shortID := c.PeerIDHex()[0:8]
-			log.Printf("LISTEN: new connection from: %s, total: %d", shortID, atomic.LoadInt64(&connCount))
+			logPrint.Trigger()
 
 			c.SetMessageHandler(func(msgID uint16, msg chiautils.FromBytes) {
 				switch msg := msg.(type) {
 				case *types.RequestPeers:
 					c.SendReply(msgID, types.RespondPeers{PeerList: nil})
 				case *types.RespondPeers:
-					log.Printf("LISTEN: %s: some peers: %d", shortID, len(msg.PeerList))
+					atomic.AddInt64(&unexpectedPeersCount, int64(len(msg.PeerList)))
 					rawNodesChan <- msg.PeerList
 				case *types.RequestBlock:
 					c.SendReply(msgID, types.RejectBlock{Height: msg.Height})
@@ -570,8 +591,8 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 					log.Printf("LISTEN: %s: peers error: %s", shortID, err)
 					break
 				}
-				// log.Printf("LISTEN: %s: peers from incoming node: %d", shortID, len(peers.PeerList))
 				rawNodesChan <- peers.PeerList
+				atomic.AddInt64(&peersCount, int64(len(peers.PeerList)))
 
 				if i%60 == 59 {
 					ip, err := askIP()
@@ -579,12 +600,12 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 						c.Send(types.RespondPeers{PeerList: []types.TimestampedPeerInfo{
 							{Host: ip, Port: network.SERVER_PORT, Timestamp: uint64(time.Now().Unix())},
 						}})
-						// log.Printf("LISTEN: %s: self advertised", shortID)
 					} else {
 						log.Printf("LISTEN: %s: ask IP error: %s", shortID, err)
 					}
 				}
 
+				logPrint.Trigger()
 				time.Sleep(time.Minute)
 			}
 		}
@@ -668,21 +689,20 @@ func CMDUpdateNodes() error {
 		// misc
 		startSeemsOffUpdater(db),
 	}
-	go func() {
-		for {
-			log.Printf("UPDATE: chans: (%d) -> (%d, %d -> %d) -> (%d, %d)",
-				len(dbNodeAddrs),
-				len(nodesNoLoc), len(rawNodeChunks), len(rawNodesNoLoc),
-				len(nodesOut), len(rawNodesOut))
-			time.Sleep(10 * time.Second)
-		}
-	}()
+	logPrint := utils.NewSyncInterval(10*time.Second, func() {
+		log.Printf("UPDATE: chans: (%d) -> (%d, %d -> %d) -> (%d, %d)",
+			len(dbNodeAddrs),
+			len(nodesNoLoc), len(rawNodeChunks), len(rawNodesNoLoc),
+			len(nodesOut), len(rawNodesOut))
+		time.Sleep(10 * time.Second)
+	})
 	for {
 		for _, worker := range workers {
 			if err := worker.PopError(); err != nil {
 				return err
 			}
 		}
+		logPrint.Trigger()
 		time.Sleep(time.Second)
 	}
 }
