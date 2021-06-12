@@ -6,6 +6,7 @@ import (
 	chiautils "chiastat/chia/utils"
 	"chiastat/utils"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"flag"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -27,6 +29,23 @@ import (
 func joinHostPort(host string, port uint16) string {
 	return net.JoinHostPort(host, strconv.Itoa(int(port)))
 }
+func joinHostPortToHashKey(host string, port uint16) string {
+	var buf []byte
+	if ip := net.ParseIP(host); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			buf = make([]byte, 4+2)
+			copy(buf, ip4)
+		} else {
+			buf = make([]byte, 16+2)
+			copy(buf, ip)
+		}
+	} else {
+		buf = make([]byte, len(host)+3) //extra zero as separator
+		copy(buf, []byte(host))
+	}
+	binary.BigEndian.PutUint16(buf[len(buf)-2:], port)
+	return string(buf)
+}
 
 func askIP() (string, error) {
 	resp, err := http.Get("https://checkip.amazonaws.com/")
@@ -39,6 +58,68 @@ func askIP() (string, error) {
 		return "", merry.Wrap(err)
 	}
 	return strings.TrimSpace(string(body)), nil
+}
+
+type ConnListItem struct {
+	prev *ConnListItem
+	next *ConnListItem
+	conn *network.WSChiaConnection
+	stop chan struct{}
+}
+type ConnList struct {
+	limit  int64
+	length int64
+	start  *ConnListItem
+	end    *ConnListItem
+	mutex  sync.Mutex
+}
+
+func (l *ConnList) PushConn(c *network.WSChiaConnection) *ConnListItem {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	item := &ConnListItem{prev: l.end, conn: c, stop: make(chan struct{}, 1)}
+	if l.end != nil {
+		l.end.next = item
+	}
+	l.end = item
+	if l.start == nil {
+		l.start = item
+	}
+	l.length += 1
+	return item
+}
+func (l *ConnList) delItemNoLock(item *ConnListItem) {
+	next := item.next
+	prev := item.prev
+	if l.start == item {
+		l.start = next
+	} else {
+		item.prev.next = next
+	}
+	if l.end == item {
+		l.end = prev
+	} else {
+		item.next.prev = prev
+	}
+	l.length -= 1
+}
+func (l *ConnList) DelItem(item *ConnListItem) {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	l.delItemNoLock(item)
+}
+func (l *ConnList) ShiftIfNeed() *ConnListItem {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	if l.length <= l.limit {
+		return nil
+	}
+	if l.start == nil {
+		return nil
+	}
+	item := l.start
+	l.delItemNoLock(item)
+	return item
 }
 
 type NodeAddr struct {
@@ -218,13 +299,12 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 
 			handleNode := func(node *NodeAddr) error {
 				cfg := &network.WSChiaConnConfig{Dialer: &websocket.Dialer{
-					HandshakeTimeout: 2 * time.Second,
+					HandshakeTimeout: 5 * time.Second,
 				}}
 				c, err := network.ConnectTo(joinHostPort(node.Host, node.Port), tlsCfg, cfg)
 				if err != nil {
 					return merry.Wrap(err)
 				}
-				c.SetDebug(false)
 				hs, err := c.PerformHandshake()
 				if err != nil {
 					return merry.Wrap(err)
@@ -265,7 +345,6 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 				}
 				atomic.AddInt64(&stampCount, 1)
 				atomic.AddInt64(&totalCount, 1)
-				atomic.AddInt64(&totalCount, 1)
 				logPrint.Trigger()
 			}
 		}()
@@ -296,19 +375,17 @@ func startRawNodesFilter(db *pg.DB, nodeChunksChan chan []types.TimestampedPeerI
 			countTotal = 0
 		})
 
-		prefillNodes := make([]*NodeAddr, 250*1000)
+		prefillNodes := make([]*NodeAddr, 500*1000)
 		_, err := db.Query(&prefillNodes, `
 			SELECT host, port FROM raw_nodes
 			WHERE NOT seems_off
-			  AND checked_at IS NOT NULL                  --for speedup
-			  AND checked_at > now() - INTERVAL '6 hours' --for speedup
 			  AND updated_at > now() - ? * INTERVAL '1 second'
 			ORDER BY checked_at ASC NULLS FIRST
 			LIMIT ?`, updateInterval, len(prefillNodes))
 		if err == nil {
 			now := time.Now().Unix()
 			for i, node := range prefillNodes {
-				nodeStamps[joinHostPort(node.Host, node.Port)] = now - updateInterval*int64(i)/int64(len(prefillNodes))
+				nodeStamps[joinHostPortToHashKey(node.Host, node.Port)] = now - updateInterval*int64(i)/int64(len(prefillNodes))
 			}
 			log.Printf("FILTER: prefilled with %d node(s)", len(nodeStamps))
 		} else {
@@ -330,10 +407,10 @@ func startRawNodesFilter(db *pg.DB, nodeChunksChan chan []types.TimestampedPeerI
 			}
 
 			for _, node := range chunk {
-				addr := joinHostPort(node.Host, node.Port)
-				if stamp, ok := nodeStamps[addr]; !ok || now-stamp > updateInterval {
+				key := joinHostPortToHashKey(node.Host, node.Port)
+				if stamp, ok := nodeStamps[key]; !ok || now-stamp > updateInterval {
 					nodesChan <- &NodeAddr{Host: node.Host, Port: node.Port}
-					nodeStamps[addr] = now
+					nodeStamps[key] = now
 					countUsed += 1
 				}
 			}
@@ -522,26 +599,38 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 
 func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan []types.TimestampedPeerInfo) utils.Worker {
 	worker := utils.NewSimpleWorker(1)
-	const connLimit = 1024
+
+	type ConnListItem struct {
+		prev *ConnListItem
+		next *ConnListItem
+		conn *network.WSChiaConnection
+		stop chan struct{}
+	}
+
+	connList := ConnList{limit: 1024}
 
 	go func() {
 		defer worker.Done()
 
-		var connCount, peersCount, unexpectedPeersCount int64
+		var newConns, peersCount, unexpectedPeersCount int64
 		logPrint := utils.NewSyncInterval(10*time.Second, func() {
 			peersCount := atomic.SwapInt64(&peersCount, 0)
 			unexpCount := atomic.SwapInt64(&unexpectedPeersCount, 0)
-			log.Printf("LISTEN: conns: %d, peers: +%d, unexp.peers: +%d",
-				atomic.LoadInt64(&connCount), peersCount, unexpCount)
+			curNewConns := atomic.SwapInt64(&newConns, 0)
+			log.Printf("LISTEN: conns: %d (+%d), peers: +%d, unexp.peers: +%d",
+				atomic.LoadInt64(&connList.length), curNewConns, peersCount, unexpCount)
 		})
 
 		connHandler := func(c *network.WSChiaConnection) {
-			c.SetDebug(false)
-			atomic.AddInt64(&connCount, 1)
+			atomic.AddInt64(&newConns, 1)
+			connItem := connList.PushConn(c)
 			defer func() {
-				atomic.AddInt64(&connCount, -1)
+				connList.DelItem(connItem)
 				c.Close()
 			}()
+			if item := connList.ShiftIfNeed(); item != nil {
+				item.stop <- struct{}{}
+			}
 
 			shortID := c.PeerIDHex()[0:8]
 			logPrint.Trigger()
@@ -571,9 +660,6 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 			if err != nil {
 				log.Printf("LISTEN: %s: handshake error: %s", shortID, err)
 				c.Close()
-				return
-			}
-			if atomic.LoadInt64(&connCount) > connLimit {
 				return
 			}
 			c.StartRoutines()
@@ -610,7 +696,14 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 				}
 
 				logPrint.Trigger()
-				time.Sleep(time.Minute)
+				timer := time.NewTimer(5 * time.Minute)
+				select {
+				case <-connItem.stop:
+					timer.Stop()
+					return
+				case <-timer.C:
+					//
+				}
 			}
 		}
 
