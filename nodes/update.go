@@ -318,8 +318,8 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 
 				id := c.PeerID()
 				nodeType, _ := types.NodeTypeName(hs.NodeType)
-				for len(nodesOutChan) == cap(nodesOutChan) {
-					time.Sleep(time.Millisecond)
+				if len(nodesOutChan) == cap(nodesOutChan) {
+					time.Sleep(time.Millisecond) //throttling
 				}
 				nodesOutChan <- &Node{
 					ID:              id[:],
@@ -335,8 +335,8 @@ func startNodesChecker(db *pg.DB, sslDir string, nodesInChan chan *NodeAddr, nod
 					if err != nil {
 						break
 					}
-					for len(rawNodesOutChan) == cap(rawNodesOutChan) {
-						time.Sleep(time.Millisecond)
+					if len(rawNodesOutChan) == cap(rawNodesOutChan) {
+						time.Sleep(time.Millisecond) //throttling
 					}
 					rawNodesOutChan <- peers.PeerList
 				}
@@ -686,10 +686,16 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 				peers, err := c.RequestPeers()
 				if err != nil {
 					log.Printf("LISTEN: %s: peers error: %s", shortID, err)
-					break
+					return
 				}
-				rawNodesChan <- peers.PeerList
-				atomic.AddInt64(&peersCount, int64(len(peers.PeerList)))
+				timer := time.NewTimer(30 * time.Second)
+				select {
+				case rawNodesChan <- peers.PeerList:
+					atomic.AddInt64(&peersCount, int64(len(peers.PeerList)))
+					timer.Stop()
+				case <-timer.C:
+					log.Printf("LISTEN: %s: timeout adding peers chunk", shortID)
+				}
 
 				if i%60 == 59 {
 					ip, err := askIP()
@@ -703,7 +709,7 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 				}
 
 				logPrint.Trigger()
-				timer := time.NewTimer(5 * time.Minute)
+				timer = time.NewTimer(5 * time.Minute)
 				select {
 				case <-connItem.stop:
 					timer.Stop()
