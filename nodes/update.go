@@ -527,6 +527,7 @@ func startNodesSaver(db *pg.DB, nodesChan chan *Node, chunkSize int) utils.Worke
 						software_version = EXCLUDED.software_version,
 						node_type = EXCLUDED.node_type,
 						country = EXCLUDED.country,
+						seems_off = false,
 						updated_at = now()`,
 					node.ID, node.Host, node.Port, node.ProtocolVersion, node.SoftwareVersion, node.NodeType, node.Country,
 				)
@@ -580,6 +581,7 @@ func startRawNodesSaver(db *pg.DB, nodesChan chan *NodeAddr, chunkSize int) util
 					INSERT INTO raw_nodes (host, port, country, updated_at) VALUES (?, ?, ?, now())
 					ON CONFLICT (host, port) DO UPDATE SET
 						country = EXCLUDED.country,
+						seems_off = false,
 						updated_at = now()`,
 					node.Host, node.Port, node.Country,
 				)
