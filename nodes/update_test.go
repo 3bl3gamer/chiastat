@@ -71,16 +71,26 @@ func TestConnList(t *testing.T) {
 	// ---
 
 	fill()
-	list.DelItem(list.start.next)
+	item := list.start.next
+	list.DelItemUnlesRemoved(item)
+	assertTwoItems(list, c0, c2)
+	assertNilItem(item.prev)
+	assertNilItem(item.next)
+	list.DelItemUnlesRemoved(item)
 	assertTwoItems(list, c0, c2)
 
-	list.DelItem(list.start)
+	list.DelItemUnlesRemoved(list.start)
 	assertOneItem(list, c2)
 
-	list.DelItem(list.start)
+	list.DelItemUnlesRemoved(list.start)
 	assertEmpty(list)
 
 	fill()
-	list.DelItem(list.end)
+	item = list.end
+	list.DelItemUnlesRemoved(item)
+	assertTwoItems(list, c0, c1)
+	assertNilItem(item.prev)
+	assertNilItem(item.next)
+	list.DelItemUnlesRemoved(item)
 	assertTwoItems(list, c0, c1)
 }

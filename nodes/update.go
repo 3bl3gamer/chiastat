@@ -101,11 +101,16 @@ func (l *ConnList) delItemNoLock(item *ConnListItem) {
 	} else {
 		item.next.prev = prev
 	}
+	item.prev = nil
+	item.next = nil
 	l.length -= 1
 }
-func (l *ConnList) DelItem(item *ConnListItem) {
+func (l *ConnList) DelItemUnlesRemoved(item *ConnListItem) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
+	if item.prev == nil && item.next == nil && l.start != item {
+		return
+	}
 	l.delItemNoLock(item)
 }
 func (l *ConnList) ShiftIfNeed() *ConnListItem {
@@ -625,7 +630,7 @@ func startNodesListener(sslDir string, nodesChan chan *Node, rawNodesChan chan [
 			atomic.AddInt64(&newConns, 1)
 			connItem := connList.PushConn(c)
 			defer func() {
-				connList.DelItem(connItem)
+				connList.DelItemUnlesRemoved(connItem)
 				c.Close()
 			}()
 			if item := connList.ShiftIfNeed(); item != nil {
